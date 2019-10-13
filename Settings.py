@@ -194,9 +194,9 @@ class Settings:
   or:  %prog [OPTION]... CHILD_DIRECTORY ANCESTOR_DIRECTORY CHILD_DIRECTORY''')
 
     version = (
-'''%prog 0.5
-Copyright (C) 2010 Michael C. James. All rights reserved.
-This software is distributed under the GPL v.2.
+'''%prog 0.1
+Copyright (C) 2019 Michael C. James. All rights reserved.
+This software is distributed under the MIT License.
 
 This program is provided with NO WARRANTY, to the extent permitted by law.''')
 
