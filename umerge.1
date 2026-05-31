@@ -1,0 +1,152 @@
+.Dd May 31, 2026
+.Dt UMERGE 1
+.Os
+.Sh NAME
+.Nm umerge
+.Nd interactive two-way and three-way directory comparison
+.Sh SYNOPSIS
+.Nm
+.Ar left right
+.Nm
+.Ar left parent right
+.Sh DESCRIPTION
+.Nm
+is a terminal user interface for comparing two or three directory trees
+side by side.
+It recursively enumerates the given directories,
+matches entries by name in a case-sensitive sorted merge,
+and runs
+.Xr diff 1
+or
+.Xr diff3 1
+on each matched file pair in the background.
+Comparison results are displayed as they arrive;
+the interface remains fully navigable while comparison is in progress.
+.Pp
+In two-way mode
+.Nm
+accepts two directories,
+.Ar left
+and
+.Ar right ,
+and displays them in side-by-side columns separated by a vertical bar.
+.Pp
+In three-way mode
+.Nm
+accepts three directories:
+.Ar left ,
+the first child tree;
+.Ar parent ,
+the common ancestor displayed in the center column;
+and
+.Ar right ,
+the second child tree.
+.Sh DISPLAY
+The terminal is divided into two or three equal-width columns separated
+by vertical bars.
+The header row shows the absolute path of each root directory.
+A status bar at the bottom of the screen shows the current cursor
+position, whether background comparison is still running, and a summary
+of available key bindings.
+.Ss Tree symbols
+Each directory entry is preceded by a two-character symbol:
+.Bl -tag -width "> "
+.It >
+The directory is collapsed and its children are not shown.
+.It v
+The directory is expanded and its children are visible below it.
+.It (two spaces)
+The entry is a regular file.
+.El
+Entries are indented two spaces per level of depth.
+.Ss Colors
+.Bl -tag -width "Blue  "
+.It White
+The entry is present on all sides.
+File contents are identical, or comparison has not yet completed.
+.It Blue
+The entry is present on all sides and file contents differ.
+In three-way mode only the columns adjacent to a differing pair are
+highlighted: if
+.Ar left
+differs from
+.Ar parent ,
+the left and center columns are blue; if
+.Ar right
+differs from
+.Ar parent ,
+the center and right columns are blue.
+Both pairs may be blue simultaneously.
+.It Green
+The entry is absent from at least one side.
+Columns where it is present are highlighted green; absent columns are
+blank.
+.El
+.Ss Diff counts
+Once a file comparison completes, a count is appended after the filename:
+.Bl -tag -width "= "
+.It =
+Zero differences; files are identical.
+.It Ar n
+Files differ in
+.Ar n
+hunks.
+.El
+In two-way mode the count appears in the left column.
+In three-way mode the left column shows the count of hunks between
+.Ar left
+and
+.Ar parent ,
+and the right column shows the count between
+.Ar right
+and
+.Ar parent .
+.Sh KEY BINDINGS
+.Bl -tag -width "Page Down  "
+.It Ic Up , k
+Move the cursor up one row.
+Scrolls the view if the cursor is at the top of the viewport.
+.It Ic Down , j
+Move the cursor down one row.
+Scrolls the view if the cursor is at the bottom of the viewport.
+.It Ic Page Up
+Scroll the view up one page.
+The cursor is clamped to remain within the new viewport.
+.It Ic Page Down
+Scroll the view down one page.
+The cursor is clamped to remain within the new viewport.
+.It Ic Left , Right
+Collapse or expand the directory at the cursor.
+Has no effect on file entries.
+.It Ic Enter
+If the cursor is on a directory, collapse or expand it.
+.Pp
+If the cursor is on a file,
+.Nm
+suspends its display, opens the matched file or files in an external
+viewer or diff tool, and resumes when the tool exits.
+The tool chosen depends on how many sides have the file:
+.Bl -tag -width "Three files  " -offset indent -compact
+.It One file
+.Xr vim 1
+.Ar file
+.It Two files
+.Xr vimdiff 1
+.Ar left right
+.It Three files
+.Xr vimdiff 1
+.Ar left parent right
+.El
+.It Ic q , Ctrl-C
+Quit
+.Nm .
+.El
+.Sh EXIT STATUS
+.Ex -std
+.Sh SEE ALSO
+.Xr diff 1 ,
+.Xr diff3 1 ,
+.Xr vim 1 ,
+.Xr vimdiff 1
+.Sh AUTHORS
+.An Michael C. James
