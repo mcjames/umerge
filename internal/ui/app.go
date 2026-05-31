@@ -60,6 +60,7 @@ type Model struct {
 	leftRoot   string
 	middleRoot string
 	rightRoot  string
+	mergeTool  string         // "vim" or "emacs"
 	entries    []*entry.Entry // source-of-truth tree
 	flat       []*entry.Entry // current visible list (re-derived on collapse/expand)
 	cursor     int            // index into flat
@@ -71,7 +72,7 @@ type Model struct {
 }
 
 // New creates the UI model. middleRoot is "" for two-way mode.
-func New(leftRoot, middleRoot, rightRoot string, entries []*entry.Entry) Model {
+func New(leftRoot, middleRoot, rightRoot string, entries []*entry.Entry, mergeTool string) Model {
 	ways := 2
 	if middleRoot != "" {
 		ways = 3
@@ -82,6 +83,7 @@ func New(leftRoot, middleRoot, rightRoot string, entries []*entry.Entry) Model {
 		leftRoot:   leftRoot,
 		middleRoot: middleRoot,
 		rightRoot:  rightRoot,
+		mergeTool:  mergeTool,
 		entries:    entries,
 		compareCh:  ch,
 		comparing:  true,
@@ -150,7 +152,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if e.IsDir {
 					e.Collapsed = !e.Collapsed
 					m.reflatten()
-				} else if cmd := mergetool.Command(e); cmd != nil {
+				} else if cmd := mergetool.Command(e, m.mergeTool); cmd != nil {
 					return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
 						return toolDoneMsg{}
 					})

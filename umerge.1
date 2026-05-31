@@ -6,9 +6,15 @@
 .Nd interactive two-way and three-way directory comparison
 .Sh SYNOPSIS
 .Nm
+.Op Fl m Ar tool
 .Ar left right
 .Nm
+.Op Fl m Ar tool
 .Ar left parent right
+.Nm
+.Fl h
+.Nm
+.Fl V
 .Sh DESCRIPTION
 .Nm
 is a terminal user interface for comparing two or three directory trees
@@ -41,6 +47,35 @@ the common ancestor displayed in the center column;
 and
 .Ar right ,
 the second child tree.
+.Sh OPTIONS
+.Bl -tag -width Ds
+.It Fl m Ar tool , Fl -merge Ns = Ns Ar tool
+Select the external diff and merge tool.
+.Ar tool
+must be one of:
+.Bl -tag -width "emacs  " -compact
+.It vim
+Use
+.Xr vim 1
+to view single files and
+.Xr vimdiff 1
+to diff two or three files.
+This is the default.
+.It emacs
+Use
+.Xr emacs 1
+to view single files,
+.Sy ediff-files
+to diff two files,
+and
+.Sy ediff3
+to diff three files.
+.El
+.It Fl V , Fl -version
+Print version and copyright information to standard output and exit 0.
+.It Fl h , Fl -help
+Print a usage summary to standard output and exit 0.
+.El
 .Sh DISPLAY
 The terminal is divided into two or three equal-width columns separated
 by vertical bars.
@@ -123,19 +158,28 @@ If the cursor is on a directory, collapse or expand it.
 .Pp
 If the cursor is on a file,
 .Nm
-suspends its display, opens the matched file or files in an external
-viewer or diff tool, and resumes when the tool exits.
-The tool chosen depends on how many sides have the file:
+suspends its display, opens the matched file or files in the configured
+diff/merge tool (see
+.Fl m ) ,
+and resumes when the tool exits.
+The command invoked depends on how many sides have the file:
 .Bl -tag -width "Three files  " -offset indent -compact
 .It One file
 .Xr vim 1
 .Ar file
+(or
+.Xr emacs 1
+.Ar file )
 .It Two files
 .Xr vimdiff 1
 .Ar left right
+(or
+.Sy ediff-files )
 .It Three files
 .Xr vimdiff 1
 .Ar left parent right
+(or
+.Sy ediff3 )
 .El
 .It Ic q , Ctrl-C
 Quit
@@ -146,6 +190,7 @@ Quit
 .Sh SEE ALSO
 .Xr diff 1 ,
 .Xr diff3 1 ,
+.Xr emacs 1 ,
 .Xr vim 1 ,
 .Xr vimdiff 1
 .Sh AUTHORS
