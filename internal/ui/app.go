@@ -35,9 +35,15 @@ var (
 			Background(lipgloss.Color("240")).
 			Foreground(lipgloss.Color("226"))
 
-	// styleUnique: entry exists on only one side (black on muted green).
+	// styleUnique: entry exists only on some sides (black on muted green).
 	styleUnique = lipgloss.NewStyle().
 			Background(lipgloss.Color("108")).
+			Foreground(lipgloss.Color("0"))
+
+	// styleChanged: entry exists everywhere but content differs (black on steel blue).
+	// Used once file comparison is implemented.
+	styleChanged = lipgloss.NewStyle().
+			Background(lipgloss.Color("67")).
 			Foreground(lipgloss.Color("0"))
 )
 
@@ -45,7 +51,9 @@ var (
 
 // Model is the Bubble Tea model for umerge.
 type Model struct {
+	ways      int    // 2 or 3
 	leftRoot  string
+	middleRoot string
 	rightRoot string
 	entries   []*entry.Entry // source-of-truth tree
 	flat      []*entry.Entry // current visible list (re-derived on collapse/expand)
@@ -55,8 +63,19 @@ type Model struct {
 	height    int
 }
 
-func New(leftRoot, rightRoot string, entries []*entry.Entry) Model {
-	m := Model{leftRoot: leftRoot, rightRoot: rightRoot, entries: entries}
+// New creates the UI model. middleRoot is "" for two-way mode.
+func New(leftRoot, middleRoot, rightRoot string, entries []*entry.Entry) Model {
+	ways := 2
+	if middleRoot != "" {
+		ways = 3
+	}
+	m := Model{
+		ways:       ways,
+		leftRoot:   leftRoot,
+		middleRoot: middleRoot,
+		rightRoot:  rightRoot,
+		entries:    entries,
+	}
 	m.flat = entry.Flatten(entries)
 	return m
 }
@@ -128,8 +147,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// reflatten rebuilds the flat list after a collapse/expand and clamps
-// cursor and offset to valid positions.
 func (m *Model) reflatten() {
 	m.flat = entry.Flatten(m.entries)
 	if m.cursor >= len(m.flat) {
@@ -156,55 +173,30 @@ func (m Model) View() string {
 		return ""
 	}
 
-	lw := m.leftWidth()
-	rw := m.rightWidth()
+	widths := m.colWidths()
 	sep := styleSep.Render("|")
 
 	var sb strings.Builder
 
-	// Header: each root path in its own column.
-	sb.WriteString(styleHeader.Render(fit(m.leftRoot, lw)))
-	sb.WriteString(sep)
-	sb.WriteString(styleHeader.Render(fit(m.rightRoot, rw)))
+	// Header: each root in its own column.
+	for i, root := range m.roots() {
+		if i > 0 {
+			sb.WriteString(sep)
+		}
+		sb.WriteString(styleHeader.Render(fit(root, widths[i])))
+	}
 	sb.WriteByte('\n')
 
 	// Content rows.
 	for row := 0; row < m.viewHeight(); row++ {
 		idx := m.offset + row
-		isCursor := idx == m.cursor
-
-		var lText, rText string
-		var lStyle, rStyle lipgloss.Style
-
-		if idx < len(m.flat) {
-			e := m.flat[idx]
-			lText = entryText(e, e.Left)
-			rText = entryText(e, e.Right)
-
-			switch {
-			case isCursor:
-				lStyle, rStyle = styleCursor, styleCursor
-			case e.Left != nil && e.Right != nil:
-				// Present on both sides.
-				if e.IsDir {
-					lStyle, rStyle = styleDir, styleDir
-				} else {
-					lStyle, rStyle = styleNormal, styleNormal
-				}
-			case e.Left != nil:
-				// Only on left side.
-				lStyle, rStyle = styleUnique, styleNormal
-			default:
-				// Only on right side.
-				lStyle, rStyle = styleNormal, styleUnique
+		texts, styles := m.rowCols(idx, idx == m.cursor)
+		for i := range texts {
+			if i > 0 {
+				sb.WriteString(sep)
 			}
-		} else {
-			lStyle, rStyle = styleNormal, styleNormal
+			sb.WriteString(styles[i].Render(fit(texts[i], widths[i])))
 		}
-
-		sb.WriteString(lStyle.Render(fit(lText, lw)))
-		sb.WriteString(sep)
-		sb.WriteString(rStyle.Render(fit(rText, rw)))
 		sb.WriteByte('\n')
 	}
 
@@ -214,6 +206,63 @@ func (m Model) View() string {
 	sb.WriteString(styleStatus.Render(fit(status, m.width)))
 
 	return sb.String()
+}
+
+// rowCols returns the display text and style for each column of row idx.
+func (m Model) rowCols(idx int, isCursor bool) ([]string, []lipgloss.Style) {
+	texts := make([]string, m.ways)
+	styles := make([]lipgloss.Style, m.ways)
+	for i := range styles {
+		styles[i] = styleNormal
+	}
+
+	if idx >= len(m.flat) {
+		return texts, styles
+	}
+
+	e := m.flat[idx]
+	paths := m.paths(e)
+
+	for i, p := range paths {
+		texts[i] = entryText(e, p)
+	}
+
+	if isCursor {
+		for i := range styles {
+			styles[i] = styleCursor
+		}
+		return texts, styles
+	}
+
+	// Determine whether every side is present.
+	allPresent := true
+	for _, p := range paths {
+		if p == nil {
+			allPresent = false
+			break
+		}
+	}
+
+	for i, p := range paths {
+		switch {
+		case allPresent:
+			// All sides have the entry. Normal coloring; blue added when
+			// file comparison is implemented.
+			if e.IsDir {
+				styles[i] = styleDir
+			} else {
+				styles[i] = styleNormal
+			}
+		case p != nil:
+			// Present on this side but absent on at least one other.
+			styles[i] = styleUnique
+		default:
+			// Absent on this side — blank cell, default terminal color.
+			styles[i] = styleNormal
+		}
+	}
+
+	return texts, styles
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -226,22 +275,44 @@ func (m Model) viewHeight() int {
 	return h
 }
 
-func (m Model) leftWidth() int {
-	if m.width < 3 {
-		return 1
+// colWidths distributes the terminal width evenly across m.ways columns,
+// giving any remainder to the leftmost columns.
+func (m Model) colWidths() []int {
+	seps := m.ways - 1
+	total := m.width - seps
+	if total < m.ways {
+		total = m.ways
 	}
-	return (m.width - 1) / 2
+	base := total / m.ways
+	extra := total % m.ways
+	widths := make([]int, m.ways)
+	for i := range widths {
+		widths[i] = base
+		if i < extra {
+			widths[i]++
+		}
+	}
+	return widths
 }
 
-func (m Model) rightWidth() int {
-	if m.width < 3 {
-		return 1
+// roots returns the header strings in column order.
+func (m Model) roots() []string {
+	if m.ways == 2 {
+		return []string{m.leftRoot, m.rightRoot}
 	}
-	return m.width - 1 - m.leftWidth()
+	return []string{m.leftRoot, m.middleRoot, m.rightRoot}
+}
+
+// paths returns the path pointers for e in column order.
+func (m Model) paths(e *entry.Entry) []*string {
+	if m.ways == 2 {
+		return []*string{e.Left, e.Right}
+	}
+	return []*string{e.Left, e.Middle, e.Right}
 }
 
 // entryText returns the display text for one side of an entry.
-// path is e.Left or e.Right; returns "" (blank cell) if nil.
+// Returns "" (blank cell) when path is nil.
 func entryText(e *entry.Entry, path *string) string {
 	if path == nil {
 		return ""
@@ -265,3 +336,6 @@ func fit(s string, width int) string {
 	s = runewidth.Truncate(s, width, "")
 	return s + strings.Repeat(" ", width-runewidth.StringWidth(s))
 }
+
+// Silence unused-variable warning for styleChanged until file comparison lands.
+var _ = styleChanged

@@ -8,83 +8,60 @@ import (
 )
 
 // Entry is one node in the merged directory tree.
-// Left and Right are nil when the file is absent on that side.
+// Left, Middle, Right are nil when the file is absent on that side.
+// Middle is always nil in two-way mode.
 type Entry struct {
-	Name      string  // display name (from whichever side has it; prefer left)
+	Name      string  // display name (prefer left, then middle, then right)
 	Left      *string // absolute path on the left side; nil if absent
+	Middle    *string // absolute path on the middle side; nil if absent or two-way
 	Right     *string // absolute path on the right side; nil if absent
-	IsDir     bool    // true if either side is a directory
+	IsDir     bool    // true if any side is a directory
 	Depth     int
 	Collapsed bool
 	Children  []*Entry
 }
 
 // BuildPair constructs a merged tree for a two-way comparison.
-// Entries are matched case-insensitively, preserving original case in paths.
 func BuildPair(leftRoot, rightRoot string) ([]*Entry, error) {
-	return buildTree(&leftRoot, &rightRoot, 0)
+	return buildTree(&leftRoot, nil, &rightRoot, 0)
 }
 
-// buildTree merges the contents of two directories into a unified tree.
-// Either root may be nil when one side lacks a subtree entirely.
-func buildTree(leftRoot, rightRoot *string, depth int) ([]*Entry, error) {
-	var leftFiles, rightFiles []os.DirEntry
+// BuildTriple constructs a merged tree for a three-way comparison.
+// middleRoot is the parent/ancestor directory; left and right are the children.
+func BuildTriple(leftRoot, middleRoot, rightRoot string) ([]*Entry, error) {
+	return buildTree(&leftRoot, &middleRoot, &rightRoot, 0)
+}
 
-	if leftRoot != nil {
-		if des, err := os.ReadDir(*leftRoot); err == nil {
-			leftFiles = des
-			sort.Slice(leftFiles, func(i, j int) bool {
-				return strings.ToLower(leftFiles[i].Name()) < strings.ToLower(leftFiles[j].Name())
-			})
-		}
-	}
-	if rightRoot != nil {
-		if des, err := os.ReadDir(*rightRoot); err == nil {
-			rightFiles = des
-			sort.Slice(rightFiles, func(i, j int) bool {
-				return strings.ToLower(rightFiles[i].Name()) < strings.ToLower(rightFiles[j].Name())
-			})
-		}
-	}
+// buildTree merges the contents of two or three directories into a unified tree.
+// Any root may be nil when that side lacks a subtree entirely.
+func buildTree(leftRoot, middleRoot, rightRoot *string, depth int) ([]*Entry, error) {
+	lf := readSorted(leftRoot)
+	mf := readSorted(middleRoot)
+	rf := readSorted(rightRoot)
 
 	var entries []*Entry
-	li, ri := 0, 0
+	li, mi, ri := 0, 0, 0
 
-	for li < len(leftFiles) || ri < len(rightFiles) {
-		hasL := li < len(leftFiles)
-		hasR := ri < len(rightFiles)
+	for li < len(lf) || mi < len(mf) || ri < len(rf) {
+		// Find the lexicographically lowest name across all active lists.
+		lowest := lowestName(lf, mf, rf, li, mi, ri)
 
-		// Decide which side(s) to consume this iteration.
-		var takeLeft, takeRight bool
-		if hasL && hasR {
-			lname := strings.ToLower(leftFiles[li].Name())
-			rname := strings.ToLower(rightFiles[ri].Name())
-			switch {
-			case lname == rname:
-				takeLeft, takeRight = true, true
-			case lname < rname:
-				takeLeft = true
-			default:
-				takeRight = true
-			}
-		} else if hasL {
-			takeLeft = true
-		} else {
-			takeRight = true
-		}
-
-		var lde, rde os.DirEntry
-		if takeLeft {
-			lde = leftFiles[li]
+		// Consume every list that matches the lowest name.
+		var lde, mde, rde os.DirEntry
+		if li < len(lf) && nameCI(lf[li]) == lowest {
+			lde = lf[li]
 			li++
 		}
-		if takeRight {
-			rde = rightFiles[ri]
+		if mi < len(mf) && nameCI(mf[mi]) == lowest {
+			mde = mf[mi]
+			mi++
+		}
+		if ri < len(rf) && nameCI(rf[ri]) == lowest {
+			rde = rf[ri]
 			ri++
 		}
 
-		// Build the Entry for this matched (or unmatched) pair.
-		var leftPath, rightPath *string
+		var leftPath, middlePath, rightPath *string
 		name := ""
 		isDir := false
 
@@ -93,6 +70,16 @@ func buildTree(leftRoot, rightRoot *string, depth int) ([]*Entry, error) {
 			leftPath = &p
 			name = lde.Name()
 			if lde.IsDir() {
+				isDir = true
+			}
+		}
+		if mde != nil {
+			p := filepath.Join(*middleRoot, mde.Name())
+			middlePath = &p
+			if name == "" {
+				name = mde.Name()
+			}
+			if mde.IsDir() {
 				isDir = true
 			}
 		}
@@ -108,23 +95,26 @@ func buildTree(leftRoot, rightRoot *string, depth int) ([]*Entry, error) {
 		}
 
 		e := &Entry{
-			Name:  name,
-			Left:  leftPath,
-			Right: rightPath,
-			IsDir: isDir,
-			Depth: depth,
+			Name:   name,
+			Left:   leftPath,
+			Middle: middlePath,
+			Right:  rightPath,
+			IsDir:  isDir,
+			Depth:  depth,
 		}
 
-		// Recurse into whichever sides are directories.
 		if isDir {
-			var lChild, rChild *string
+			var lc, mc, rc *string
 			if lde != nil && lde.IsDir() {
-				lChild = leftPath
+				lc = leftPath
+			}
+			if mde != nil && mde.IsDir() {
+				mc = middlePath
 			}
 			if rde != nil && rde.IsDir() {
-				rChild = rightPath
+				rc = rightPath
 			}
-			e.Children, _ = buildTree(lChild, rChild, depth+1)
+			e.Children, _ = buildTree(lc, mc, rc, depth+1)
 		}
 
 		entries = append(entries, e)
@@ -144,4 +134,42 @@ func Flatten(entries []*Entry) []*Entry {
 		}
 	}
 	return out
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+func readSorted(root *string) []os.DirEntry {
+	if root == nil {
+		return nil
+	}
+	des, err := os.ReadDir(*root)
+	if err != nil {
+		return nil
+	}
+	sort.Slice(des, func(i, j int) bool {
+		return strings.ToLower(des[i].Name()) < strings.ToLower(des[j].Name())
+	})
+	return des
+}
+
+func nameCI(de os.DirEntry) string {
+	return strings.ToLower(de.Name())
+}
+
+func lowestName(lf, mf, rf []os.DirEntry, li, mi, ri int) string {
+	lowest := ""
+	if li < len(lf) {
+		lowest = nameCI(lf[li])
+	}
+	if mi < len(mf) {
+		if n := nameCI(mf[mi]); lowest == "" || n < lowest {
+			lowest = n
+		}
+	}
+	if ri < len(rf) {
+		if n := nameCI(rf[ri]); lowest == "" || n < lowest {
+			lowest = n
+		}
+	}
+	return lowest
 }
