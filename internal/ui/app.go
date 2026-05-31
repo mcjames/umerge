@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -55,16 +56,18 @@ type toolDoneMsg struct{}
 
 // Model is the Bubble Tea model for umerge.
 type Model struct {
-	ways      int    // 2 or 3
-	leftRoot  string
+	ways       int    // 2 or 3
+	leftRoot   string
 	middleRoot string
-	rightRoot string
-	entries   []*entry.Entry // source-of-truth tree
-	flat      []*entry.Entry // current visible list (re-derived on collapse/expand)
-	cursor    int            // index into flat
-	offset    int            // index of first visible row
-	width     int
-	height    int
+	rightRoot  string
+	entries    []*entry.Entry // source-of-truth tree
+	flat       []*entry.Entry // current visible list (re-derived on collapse/expand)
+	cursor     int            // index into flat
+	offset     int            // index of first visible row
+	width      int
+	height     int
+	compareCh  <-chan tea.Msg // nil when comparison is done
+	comparing  bool           // true while background comparison is running
 }
 
 // New creates the UI model. middleRoot is "" for two-way mode.
@@ -73,26 +76,42 @@ func New(leftRoot, middleRoot, rightRoot string, entries []*entry.Entry) Model {
 	if middleRoot != "" {
 		ways = 3
 	}
+	ch := startCompare(entries, ways)
 	m := Model{
 		ways:       ways,
 		leftRoot:   leftRoot,
 		middleRoot: middleRoot,
 		rightRoot:  rightRoot,
 		entries:    entries,
+		compareCh:  ch,
+		comparing:  true,
 	}
 	m.flat = entry.Flatten(entries)
 	return m
 }
 
-func (m Model) Init() tea.Cmd { return nil }
+func (m Model) Init() tea.Cmd {
+	return listenForCompare(m.compareCh)
+}
 
 // ── Update ────────────────────────────────────────────────────────────────────
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
+	case compareResultMsg:
+		msg.e.Compare = msg.state
+		msg.e.NumDiffs = msg.numDiffs
+		msg.e.LMDiffs = msg.lmDiffs
+		msg.e.MRDiffs = msg.mrDiffs
+		return m, listenForCompare(m.compareCh)
+
+	case compareDoneMsg:
+		m.compareCh = nil
+		m.comparing = false
+
 	case toolDoneMsg:
-		// Tool exited. Will trigger re-comparison once diff is implemented.
+		// Tool exited. Re-comparison of the edited entry will be added later.
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -221,8 +240,12 @@ func (m Model) View() string {
 	}
 
 	// Status bar.
-	status := fmt.Sprintf(" %d/%d  q quit  ←→/enter collapse  ↑↓/jk move  PgUp/PgDn scroll",
-		m.cursor+1, len(m.flat))
+	comparing := ""
+	if m.comparing {
+		comparing = "  comparing..."
+	}
+	status := fmt.Sprintf(" %d/%d%s  q quit  ←→/enter collapse  ↑↓/jk move  PgUp/PgDn scroll",
+		m.cursor+1, len(m.flat), comparing)
 	sb.WriteString(styleStatus.Render(fit(status, m.width)))
 
 	return sb.String()
@@ -243,8 +266,9 @@ func (m Model) rowCols(idx int, isCursor bool) ([]string, []lipgloss.Style) {
 	e := m.flat[idx]
 	paths := m.paths(e)
 
+	counts := m.diffCounts(e)
 	for i, p := range paths {
-		texts[i] = entryText(e, p)
+		texts[i] = entryText(e, p, counts[i])
 	}
 
 	if isCursor {
@@ -265,19 +289,17 @@ func (m Model) rowCols(idx int, isCursor bool) ([]string, []lipgloss.Style) {
 
 	for i, p := range paths {
 		switch {
+		case allPresent && e.IsDir:
+			styles[i] = styleDir
+		case allPresent && e.Compare == entry.Different:
+			styles[i] = styleChanged
 		case allPresent:
-			// All sides have the entry. Normal coloring; blue added when
-			// file comparison is implemented.
-			if e.IsDir {
-				styles[i] = styleDir
-			} else {
-				styles[i] = styleNormal
-			}
+			// Same or still Uncompared — normal white.
+			styles[i] = styleNormal
 		case p != nil:
 			// Present on this side but absent on at least one other.
 			styles[i] = styleUnique
 		default:
-			// Absent on this side — blank cell, default terminal color.
 			styles[i] = styleNormal
 		}
 	}
@@ -331,9 +353,29 @@ func (m Model) paths(e *entry.Entry) []*string {
 	return []*string{e.Left, e.Middle, e.Right}
 }
 
+// diffCounts returns a per-column diff count pointer (nil = don't show).
+// For 2-way: [left count, nil]. For 3-way: [lm count, nil, mr count].
+func (m Model) diffCounts(e *entry.Entry) []*int {
+	none := make([]*int, m.ways)
+	if e.IsDir || e.Compare == entry.Uncompared || e.Compare == entry.CompareError {
+		return none
+	}
+	counts := make([]*int, m.ways)
+	if m.ways == 2 {
+		n := e.NumDiffs
+		counts[0] = &n
+	} else {
+		lm, mr := e.LMDiffs, e.MRDiffs
+		counts[0] = &lm
+		counts[2] = &mr
+	}
+	return counts
+}
+
 // entryText returns the display text for one side of an entry.
+// count is non-nil when a diff count should be appended.
 // Returns "" (blank cell) when path is nil.
-func entryText(e *entry.Entry, path *string) string {
+func entryText(e *entry.Entry, path *string, count *int) string {
 	if path == nil {
 		return ""
 	}
@@ -348,7 +390,15 @@ func entryText(e *entry.Entry, path *string) string {
 	} else {
 		arrow = "  "
 	}
-	return indent + arrow + filepath.Base(*path)
+	text := indent + arrow + filepath.Base(*path)
+	if count != nil {
+		if *count == 0 {
+			text += " ="
+		} else {
+			text += " " + strconv.Itoa(*count)
+		}
+	}
+	return text
 }
 
 // fit truncates or pads s to exactly width display columns.
@@ -357,5 +407,3 @@ func fit(s string, width int) string {
 	return s + strings.Repeat(" ", width-runewidth.StringWidth(s))
 }
 
-// Silence unused-variable warning for styleChanged until file comparison lands.
-var _ = styleChanged

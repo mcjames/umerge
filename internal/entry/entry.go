@@ -6,6 +6,16 @@ import (
 	"sort"
 )
 
+// CompareState is the result of comparing the file content across sides.
+type CompareState int
+
+const (
+	Uncompared CompareState = iota
+	Same
+	Different
+	CompareError
+)
+
 // Entry is one node in the merged directory tree.
 // Left, Middle, Right are nil when the file is absent on that side.
 // Middle is always nil in two-way mode.
@@ -18,6 +28,12 @@ type Entry struct {
 	Depth     int
 	Collapsed bool
 	Children  []*Entry
+
+	// Comparison results (files only; set asynchronously after build).
+	Compare  CompareState
+	NumDiffs int // 2-way: hunks between left and right
+	LMDiffs  int // 3-way: hunks between left and middle
+	MRDiffs  int // 3-way: hunks between middle and right
 }
 
 // BuildPair constructs a merged tree for a two-way comparison.
