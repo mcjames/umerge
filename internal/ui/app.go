@@ -39,13 +39,12 @@ var (
 
 	// styleUnique: entry exists only on some sides (black on muted green).
 	styleUnique = lipgloss.NewStyle().
-			Background(lipgloss.Color("108")).
+			Background(lipgloss.Color("#c0dcc0")).
 			Foreground(lipgloss.Color("0"))
 
 	// styleChanged: entry exists everywhere but content differs (black on steel blue).
-	// Used once file comparison is implemented.
 	styleChanged = lipgloss.NewStyle().
-			Background(lipgloss.Color("67")).
+			Background(lipgloss.Color("#a6caf0")).
 			Foreground(lipgloss.Color("0"))
 )
 
