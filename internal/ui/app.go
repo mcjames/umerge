@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 	"umerge/internal/entry"
+	"umerge/internal/mergetool"
 )
 
 // ── styles ────────────────────────────────────────────────────────────────────
@@ -46,6 +47,9 @@ var (
 			Background(lipgloss.Color("67")).
 			Foreground(lipgloss.Color("0"))
 )
+
+// toolDoneMsg is sent when the external diff/merge tool exits.
+type toolDoneMsg struct{}
 
 // ── Model ─────────────────────────────────────────────────────────────────────
 
@@ -87,6 +91,9 @@ func (m Model) Init() tea.Cmd { return nil }
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
+	case toolDoneMsg:
+		// Tool exited. Will trigger re-comparison once diff is implemented.
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -112,10 +119,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case "left", "right", "enter":
+		case "left", "right":
 			if len(m.flat) > 0 && m.flat[m.cursor].IsDir {
 				m.flat[m.cursor].Collapsed = !m.flat[m.cursor].Collapsed
 				m.reflatten()
+			}
+
+		case "enter":
+			if len(m.flat) > 0 {
+				e := m.flat[m.cursor]
+				if e.IsDir {
+					e.Collapsed = !e.Collapsed
+					m.reflatten()
+				} else if cmd := mergetool.Command(e); cmd != nil {
+					return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+						return toolDoneMsg{}
+					})
+				}
 			}
 
 		case "pgup":
