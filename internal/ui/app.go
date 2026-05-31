@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -33,23 +34,29 @@ var (
 	styleCursor = lipgloss.NewStyle().
 			Background(lipgloss.Color("240")).
 			Foreground(lipgloss.Color("226"))
+
+	// styleUnique: entry exists on only one side (black on muted green).
+	styleUnique = lipgloss.NewStyle().
+			Background(lipgloss.Color("108")).
+			Foreground(lipgloss.Color("0"))
 )
 
 // ── Model ─────────────────────────────────────────────────────────────────────
 
 // Model is the Bubble Tea model for umerge.
 type Model struct {
-	root    string
-	entries []*entry.Entry // source-of-truth tree
-	flat    []*entry.Entry // current visible list (re-derived on collapse/expand)
-	cursor  int            // index into flat
-	offset  int            // index of first visible row
-	width   int
-	height  int
+	leftRoot  string
+	rightRoot string
+	entries   []*entry.Entry // source-of-truth tree
+	flat      []*entry.Entry // current visible list (re-derived on collapse/expand)
+	cursor    int            // index into flat
+	offset    int            // index of first visible row
+	width     int
+	height    int
 }
 
-func New(root string, entries []*entry.Entry) Model {
-	m := Model{root: root, entries: entries}
+func New(leftRoot, rightRoot string, entries []*entry.Entry) Model {
+	m := Model{leftRoot: leftRoot, rightRoot: rightRoot, entries: entries}
 	m.flat = entry.Flatten(entries)
 	return m
 }
@@ -131,7 +138,6 @@ func (m *Model) reflatten() {
 	if m.cursor < 0 {
 		m.cursor = 0
 	}
-	// keep cursor inside the viewport
 	if m.offset > m.cursor {
 		m.offset = m.cursor
 	}
@@ -156,10 +162,10 @@ func (m Model) View() string {
 
 	var sb strings.Builder
 
-	// Header: root path in both columns.
-	sb.WriteString(styleHeader.Render(fit(m.root, lw)))
+	// Header: each root path in its own column.
+	sb.WriteString(styleHeader.Render(fit(m.leftRoot, lw)))
 	sb.WriteString(sep)
-	sb.WriteString(styleHeader.Render(fit(m.root, rw)))
+	sb.WriteString(styleHeader.Render(fit(m.rightRoot, rw)))
 	sb.WriteByte('\n')
 
 	// Content rows.
@@ -167,30 +173,38 @@ func (m Model) View() string {
 		idx := m.offset + row
 		isCursor := idx == m.cursor
 
-		var text string
-		var isDir bool
+		var lText, rText string
+		var lStyle, rStyle lipgloss.Style
+
 		if idx < len(m.flat) {
-			text = entryText(m.flat[idx])
-			isDir = m.flat[idx].IsDir
+			e := m.flat[idx]
+			lText = entryText(e, e.Left)
+			rText = entryText(e, e.Right)
+
+			switch {
+			case isCursor:
+				lStyle, rStyle = styleCursor, styleCursor
+			case e.Left != nil && e.Right != nil:
+				// Present on both sides.
+				if e.IsDir {
+					lStyle, rStyle = styleDir, styleDir
+				} else {
+					lStyle, rStyle = styleNormal, styleNormal
+				}
+			case e.Left != nil:
+				// Only on left side.
+				lStyle, rStyle = styleUnique, styleNormal
+			default:
+				// Only on right side.
+				lStyle, rStyle = styleNormal, styleUnique
+			}
+		} else {
+			lStyle, rStyle = styleNormal, styleNormal
 		}
 
-		lCell := fit(text, lw)
-		rCell := fit(text, rw)
-
-		switch {
-		case isCursor:
-			sb.WriteString(styleCursor.Render(lCell))
-			sb.WriteString(sep)
-			sb.WriteString(styleCursor.Render(rCell))
-		case isDir:
-			sb.WriteString(styleDir.Render(lCell))
-			sb.WriteString(sep)
-			sb.WriteString(styleDir.Render(rCell))
-		default:
-			sb.WriteString(styleNormal.Render(lCell))
-			sb.WriteString(sep)
-			sb.WriteString(styleNormal.Render(rCell))
-		}
+		sb.WriteString(lStyle.Render(fit(lText, lw)))
+		sb.WriteString(sep)
+		sb.WriteString(rStyle.Render(fit(rText, rw)))
 		sb.WriteByte('\n')
 	}
 
@@ -226,8 +240,12 @@ func (m Model) rightWidth() int {
 	return m.width - 1 - m.leftWidth()
 }
 
-// entryText builds the display string for one entry (indent + arrow + name).
-func entryText(e *entry.Entry) string {
+// entryText returns the display text for one side of an entry.
+// path is e.Left or e.Right; returns "" (blank cell) if nil.
+func entryText(e *entry.Entry, path *string) string {
+	if path == nil {
+		return ""
+	}
 	indent := strings.Repeat("  ", e.Depth)
 	var arrow string
 	if e.IsDir {
@@ -239,7 +257,7 @@ func entryText(e *entry.Entry) string {
 	} else {
 		arrow = "  "
 	}
-	return indent + arrow + e.Name
+	return indent + arrow + filepath.Base(*path)
 }
 
 // fit truncates or pads s to exactly width display columns.
