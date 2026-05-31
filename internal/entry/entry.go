@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 )
 
 // Entry is one node in the merged directory tree.
@@ -48,15 +47,15 @@ func buildTree(leftRoot, middleRoot, rightRoot *string, depth int) ([]*Entry, er
 
 		// Consume every list that matches the lowest name.
 		var lde, mde, rde os.DirEntry
-		if li < len(lf) && nameCI(lf[li]) == lowest {
+		if li < len(lf) && lf[li].Name() == lowest {
 			lde = lf[li]
 			li++
 		}
-		if mi < len(mf) && nameCI(mf[mi]) == lowest {
+		if mi < len(mf) && mf[mi].Name() == lowest {
 			mde = mf[mi]
 			mi++
 		}
-		if ri < len(rf) && nameCI(rf[ri]) == lowest {
+		if ri < len(rf) && rf[ri].Name() == lowest {
 			rde = rf[ri]
 			ri++
 		}
@@ -147,27 +146,23 @@ func readSorted(root *string) []os.DirEntry {
 		return nil
 	}
 	sort.Slice(des, func(i, j int) bool {
-		return strings.ToLower(des[i].Name()) < strings.ToLower(des[j].Name())
+		return des[i].Name() < des[j].Name()
 	})
 	return des
-}
-
-func nameCI(de os.DirEntry) string {
-	return strings.ToLower(de.Name())
 }
 
 func lowestName(lf, mf, rf []os.DirEntry, li, mi, ri int) string {
 	lowest := ""
 	if li < len(lf) {
-		lowest = nameCI(lf[li])
+		lowest = lf[li].Name()
 	}
 	if mi < len(mf) {
-		if n := nameCI(mf[mi]); lowest == "" || n < lowest {
+		if n := mf[mi].Name(); lowest == "" || n < lowest {
 			lowest = n
 		}
 	}
 	if ri < len(rf) {
-		if n := nameCI(rf[ri]); lowest == "" || n < lowest {
+		if n := rf[ri].Name(); lowest == "" || n < lowest {
 			lowest = n
 		}
 	}
