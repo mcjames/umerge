@@ -292,7 +292,7 @@ func (m Model) rowCols(idx int, isCursor bool) ([]string, []lipgloss.Style) {
 		case allPresent && e.IsDir:
 			styles[i] = styleDir
 		case allPresent && e.Compare == entry.Different:
-			styles[i] = styleChanged
+			styles[i] = m.diffStyleForCol(e, i)
 		case allPresent:
 			// Same or still Uncompared — normal white.
 			styles[i] = styleNormal
@@ -305,6 +305,35 @@ func (m Model) rowCols(idx int, isCursor bool) ([]string, []lipgloss.Style) {
 	}
 
 	return texts, styles
+}
+
+// diffStyleForCol returns the appropriate style for column col when an entry
+// is present on all sides but has differences.
+//
+// 2-way: both columns blue (only one comparison).
+// 3-way: mirrors Python's per-pair logic —
+//   lmDiffs > 0  →  left + middle blue
+//   mrDiffs > 0  →  middle + right blue
+func (m Model) diffStyleForCol(e *entry.Entry, col int) lipgloss.Style {
+	if m.ways == 2 {
+		return styleChanged
+	}
+	// 3-way: color only the columns adjacent to the differing pair.
+	switch col {
+	case 0: // left: blue if left↔middle differ
+		if e.LMDiffs > 0 {
+			return styleChanged
+		}
+	case 1: // middle: blue if either pair differs
+		if e.LMDiffs > 0 || e.MRDiffs > 0 {
+			return styleChanged
+		}
+	case 2: // right: blue if middle↔right differ
+		if e.MRDiffs > 0 {
+			return styleChanged
+		}
+	}
+	return styleNormal
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
