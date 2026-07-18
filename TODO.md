@@ -66,20 +66,118 @@ and `go test ./...` are clean — 40 tests passing across
 
 ---
 
-## Priority 1 — File operations (baseline usability)
+## Priority 1 — File operations (baseline usability) — ✅ DONE (2026-07-18)
 
 Without these umerge is read-only. Ported from Python. Per the testing
 policy: write `t.TempDir()`-based tests for each copy/delete function
 before wiring its key-handling into `Update()`.
+
+**Done:** `fileops.Copy`/`fileops.Delete` (mirroring `cp -R`/`rm -Rf`
+semantics), `internal/ui/ops.go` (copy/delete orchestration: path
+computation for absent destinations, subtree rebuild + recompare after a
+directory copy, tree splicing after delete), and the 2-way/3-way key
+wiring in `app.go` including the 3-way multi-step prompt state machine.
+34 new tests (`fileops`, `ui/ops_test.go`, `ui/app_test.go`) plus 3 manual
+end-to-end smoke tests against the real compiled binary in a live
+pty (2-way copy, 2-way delete, 3-way `a`→`c` prompt) — all passing.
+`--help` text and the `umerge.1` man page are kept in sync (standing
+practice now, see below).
+
+**Bug found and fixed 2026-07-18: copying from an absent source silently
+did nothing** (e.g. "b then c" when the entry was absent from the right;
+"c then a" when absent from the middle/parent). Root cause: `copyEntry`
+no-op'd whenever the source side was nil, with no feedback. This is
+**not** a case of faithfully porting a Python design — Python's own
+letter-based 3-way copy (`Model3.__copy_aux`) has its equivalent guard
+commented out (`#  if item.left is None: return`), so it just lets `cp`
+fail and marks the item `ERROR`, indistinguishable from a real I/O
+failure. Neither behavior (silent no-op, or a fake-looking generic error)
+is right. Fixed properly instead: the source side is validated the moment
+the *first* letter is pressed (`Model.beginCopy` in `app.go`), before any
+prompt is shown — if that column is empty there's a visible flash message
+("Nothing to copy: right is absent") and, in 3-way mode, the destination
+prompt never starts. A destination is never invalid to choose — copying
+*to* an absent side is the normal case, since that's what creates it. An
+invalid destination choice (same column as source, or an unrelated key)
+now also flashes "Invalid choice" instead of silently cancelling. New
+`Model.flash` field, cleared at the top of every keypress. Verified with
+unit tests plus live-pty smoke tests for both reported directions
+(confirmed empirically that the pty smoke-test harness needs an explicit
+`TIOCSWINSZ` window size set, or Bubble Tea's `View()` renders nothing —
+easy to mistake for the app being broken when it's the harness).
+
+**Second, deeper bug found and fixed 2026-07-18 (same day, reported after
+the above): copying a file into a destination whose intermediate
+directories were never enumerated on that side at all silently failed.**
+Concretely: `left/a/` exists but is empty; `right/a/sub/file.txt` exists.
+Navigating all the way down to `file.txt` (present on the right, absent
+on the left) and copying it over did nothing — no file appeared, no
+visible error. Root cause: `fileops.Copy` shelled out straight to
+`cp -R src dest`, and plain `cp` refuses to create a destination's missing
+*parent* directories (`sub/` in this example) — it only creates the final
+path component, assuming everything above it already exists. Python's
+`FileOpsPOSIX.copy_primitive` has the exact same `cp -R` call and would
+fail identically; this isn't a Python-vs-Go divergence, just a limitation
+neither version had addressed. Fixed in `fileops.Copy`: `os.MkdirAll` the
+destination's parent directory before invoking `cp -R`, so copying a
+deeply-nested file always succeeds regardless of how many missing
+directory levels are needed, matching what a user actually expects
+"copy this over" to do. Also fixed the reason this failure was invisible
+in the first place: `copyEntry`/`deleteEntry` now set `Model.flash` with
+the actual error on failure (previously only the internal `Compare` state
+was marked `CompareError`, with no user-visible signal at all — not even
+color, since `CompareError` had no distinct style in `rowCols`, an gap
+Priority 12 already listed as future work but which turned out to matter
+now). Added `styleError` (per Priority 12) so failed entries stay visibly
+red rather than reverting to normal white the instant the flash message
+clears. Verified with a unit test mirroring the exact reported directory
+shape, plus a live-pty smoke test reproducing the original report
+end-to-end.
+
+**Third bug found and fixed 2026-07-18 (same day): copying a directory
+with contents didn't show those contents in the tree until an unrelated
+collapse/expand.** The copy itself was correct on disk — this was purely
+a stale-UI bug. `Model.flat` is a separately-maintained flattened cache
+of the tree (re-derived from `Model.entries` only when `reflatten()` is
+called); `copyEntry`'s `rebuildChildren` replaces `e.Children` with a
+freshly-enumerated subtree, but nothing told `m.flat` to catch up, so the
+rendered tree kept pointing at the old (often empty) children until
+collapse/expand happened to call `reflatten()` for its own reasons. Fixed
+by calling `m.reflatten()` right after `rebuildChildren` in `copyEntry`.
+Added a regression test asserting on `m.flat` by object identity — not
+just length, since a same-length stale slice would pass a naive check —
+plus a live-pty smoke test confirming a copied directory's contents
+render immediately with no collapse/expand needed.
 
 ### Copy (2-way)
 - `a` — copy current item left → right
 - `b` — copy current item right → left
 
 ### Copy (3-way, multi-step prompt)
-- `a` → sub-prompt "Copy from A (left) to:" → `b` or `c`
-- `b` → sub-prompt "Copy from B (middle) to:" → `a` or `c`
-- `c` → sub-prompt "Copy from C (right) to:" → `a` or `b`
+**Corrected 2026-07-18 against actual source** (`Match3.letter_to_subpart`
+and the Controller's own prompt text) — the column mapping is `a`=left,
+`b`=right, `c`=middle, not the left/middle/right guess originally written
+here:
+- `a` → sub-prompt "Copy from A (left) to:" → `b` (right) or `c` (middle)
+- `b` → sub-prompt "Copy from B (right) to:" → `a` (left) or `c` (middle)
+- `c` → sub-prompt "Copy from C (middle) to:" → `a` (left) or `b` (right)
+
+### Copy/delete semantics, verified against `FileOpsPOSIX.py`
+- Copy is literally `cp -R src dest`; delete is literally `rm -Rf path`.
+- If the copy destination already exists as a **directory**, it's deleted
+  first, then `cp -R` recreates it fresh — copy fully replaces the
+  destination directory rather than merging into it. If the destination
+  exists as a **file**, `cp -R` overwrites it directly, no pre-delete step.
+- **No confirmation prompt anywhere**, for copy or delete, in the Python
+  version — `d` runs `rm -Rf` immediately on every present side of the
+  current item. Decided to match this in the Go version rather than add a
+  confirmation dialog.
+- 3-way delete removes whichever of left/middle/right are present for
+  that item (same "remove everywhere it exists" idea as 2-way, one more
+  side).
+- Selection-based bulk delete (`d` acting on a selection instead of the
+  cursor item) depends on Priority 5, not built yet — for now `d` always
+  acts on just the cursor item.
 
 ### Delete
 - `d` — delete current item (both/all sides); if a selection exists, delete
@@ -217,6 +315,15 @@ Ported from Python.
 - `S` — multi-step prompt: choose column (A/B/C), then choose feature
   (absent / unchanged / changed / inserted); selects matching items
 - `x` sub-command of `S` — clear selection
+
+**Bug found in the Python source, not to be ported as-is:**
+`Match3.selection_matches(self, column, feature)` ignores both of its
+parameters — it always just returns whether the item is "present in left,
+absent in middle," regardless of which column/feature the user actually
+chose in the `S` prompt. Looks like unfinished code, not an intentional
+design choice. Implement this properly in Go: actually honor the chosen
+column (A/B/C → left/right/middle) and feature (absent/unchanged/changed/
+inserted) rather than reproducing the stub.
 
 ---
 
@@ -402,8 +509,14 @@ observations from the Go rewrite, not present in the Python version).
 - **Cancel background comparison on quit** — the comparison goroutine
   currently runs to completion even after the user presses `q`. Pass a
   `context.Context` so it stops promptly.
-- **Error state display** — entries that fail to compare (e.g., permission
-  denied) should render in an error color rather than staying white.
+- **Error state display** — ✅ partially done as of Priority 1's bug fixes
+  (2026-07-18): `styleError` now renders `CompareError` entries in red
+  instead of white, and copy/delete failures set it. Still open: nothing
+  yet causes a *compare-time* failure (e.g. permission denied reading a
+  file during the initial background comparison) to actually reach
+  `CompareError` — `compareEntry` treats a `diff`/`diff3` exec error as
+  `CompareError` already, so this may already work, but hasn't been
+  exercised/tested for that path specifically.
 - **Lazy tree loading** — `BuildPair`/`BuildTriple` currently read the
   entire directory tree eagerly at startup. For very large trees a lazy
   approach (load children on expand) would improve startup time.

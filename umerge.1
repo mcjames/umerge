@@ -181,6 +181,64 @@ The command invoked depends on how many sides have the file:
 (or
 .Sy ediff3 )
 .El
+.It Ic a
+In two-way mode, copy the entry at the cursor from
+.Ar left
+to
+.Ar right .
+.Pp
+In three-way mode, prompts
+.Dq Copy from A (left) to:
+press
+.Ic b
+to copy to
+.Ar right
+or
+.Ic c
+to copy to
+.Ar parent .
+Any other key cancels.
+.It Ic b
+In two-way mode, copy the entry at the cursor from
+.Ar right
+to
+.Ar left .
+.Pp
+In three-way mode, prompts
+.Dq Copy from B (right) to:
+press
+.Ic a
+to copy to
+.Ar left
+or
+.Ic c
+to copy to
+.Ar parent .
+Any other key cancels.
+.It Ic c
+Three-way mode only.
+Prompts
+.Dq Copy from C (parent) to:
+press
+.Ic a
+to copy to
+.Ar left
+or
+.Ic b
+to copy to
+.Ar right .
+Any other key cancels.
+.Pp
+For
+.Ic a , b ,
+and
+.Ic c :
+copying onto a destination that already exists replaces it outright
+(an existing destination directory is removed first, rather than merged
+into); there is no confirmation prompt.
+.It Ic d
+Delete the entry at the cursor from every side on which it exists.
+There is no confirmation prompt.
 .It Ic q , Ctrl-C
 Quit
 .Nm .

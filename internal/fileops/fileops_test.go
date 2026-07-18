@@ -158,3 +158,136 @@ func TestCompareThreeFiles_NonexistentFile(t *testing.T) {
 		t.Fatal("expected an error comparing against a nonexistent file, got nil")
 	}
 }
+
+func TestCopy_FileToNewDestination(t *testing.T) {
+	dir := t.TempDir()
+	src := writeFile(t, dir, "src.txt", "hello\n")
+	dest := filepath.Join(dir, "dest.txt")
+
+	if err := Copy(src, dest); err != nil {
+		t.Fatalf("Copy: %v", err)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("reading dest: %v", err)
+	}
+	if string(got) != "hello\n" {
+		t.Errorf("dest content = %q, want %q", got, "hello\n")
+	}
+}
+
+func TestCopy_FileOverwritesExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	src := writeFile(t, dir, "src.txt", "new content\n")
+	dest := writeFile(t, dir, "dest.txt", "old content\n")
+
+	if err := Copy(src, dest); err != nil {
+		t.Fatalf("Copy: %v", err)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("reading dest: %v", err)
+	}
+	if string(got) != "new content\n" {
+		t.Errorf("dest content = %q, want %q", got, "new content\n")
+	}
+}
+
+func TestCopy_DirectoryReplacesExistingDirectory(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src")
+	dest := filepath.Join(dir, "dest")
+	if err := os.MkdirAll(filepath.Join(src, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "src/sub/keep.txt", "keep\n")
+
+	// dest already exists with different, unrelated contents.
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "dest/stale.txt", "should be gone after copy\n")
+
+	if err := Copy(src, dest); err != nil {
+		t.Fatalf("Copy: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dest, "stale.txt")); !os.IsNotExist(err) {
+		t.Errorf("stale.txt should have been removed by the directory replace, err=%v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dest, "sub", "keep.txt"))
+	if err != nil {
+		t.Fatalf("reading copied nested file: %v", err)
+	}
+	if string(got) != "keep\n" {
+		t.Errorf("nested content = %q, want %q", got, "keep\n")
+	}
+}
+
+func TestCopy_CreatesMissingIntermediateDestinationDirectories(t *testing.T) {
+	dir := t.TempDir()
+	src := writeFile(t, dir, "src.txt", "content\n")
+	// dest's parent ("missing/levels") doesn't exist at all yet — this is
+	// the exact shape of the reported bug: a file present several levels
+	// deep on one side where none of those intermediate directories were
+	// ever created on the destination side.
+	dest := filepath.Join(dir, "missing", "levels", "dest.txt")
+
+	if err := Copy(src, dest); err != nil {
+		t.Fatalf("Copy: %v", err)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatalf("reading dest: %v", err)
+	}
+	if string(got) != "content\n" {
+		t.Errorf("dest content = %q, want %q", got, "content\n")
+	}
+}
+
+func TestCopy_NonexistentSourceErrors(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "does-not-exist")
+	dest := filepath.Join(dir, "dest.txt")
+
+	if err := Copy(src, dest); err == nil {
+		t.Fatal("expected an error copying a nonexistent source, got nil")
+	}
+}
+
+func TestDelete_RemovesFile(t *testing.T) {
+	dir := t.TempDir()
+	p := writeFile(t, dir, "gone.txt", "bye\n")
+
+	if err := Delete(p); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Errorf("expected file to be gone, err=%v", err)
+	}
+}
+
+func TestDelete_RemovesDirectoryRecursively(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.MkdirAll(filepath.Join(target, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, dir, "target/sub/file.txt", "content\n")
+
+	if err := Delete(target); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Errorf("expected directory to be gone, err=%v", err)
+	}
+}
+
+func TestDelete_NonexistentPathIsNotAnError(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "never-existed")
+
+	if err := Delete(p); err != nil {
+		t.Errorf("Delete of a nonexistent path should not error, got: %v", err)
+	}
+}

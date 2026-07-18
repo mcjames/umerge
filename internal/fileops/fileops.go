@@ -2,9 +2,41 @@ package fileops
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
+
+// Copy copies src onto dest, recursively. If dest already exists as a
+// directory, it is removed first so the result exactly mirrors src rather
+// than nesting src inside the existing directory. If dest exists as a
+// file, it is overwritten directly. Any missing intermediate directories
+// in dest's path are created first — without this, copying a file whose
+// destination side is missing multiple levels deep (e.g. the immediate
+// parent directory was never enumerated on that side at all) fails with
+// "cp: cannot create ... No such file or directory", since plain `cp -R`
+// requires the destination's parent to already exist. Mirrors the Python
+// version's FileOpsPOSIX primitive ("cp -R") plus the pre-deleting of a
+// directory target, but goes beyond it on the missing-parent case, which
+// Python's `cp -R` would fail on identically.
+func Copy(src, dest string) error {
+	if info, err := os.Stat(dest); err == nil && info.IsDir() {
+		if err := os.RemoveAll(dest); err != nil {
+			return err
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return err
+	}
+	return exec.Command("cp", "-R", src, dest).Run()
+}
+
+// Delete removes path and everything under it. It is not an error if
+// path does not exist.
+func Delete(path string) error {
+	return os.RemoveAll(path)
+}
 
 // CompareTwoFiles runs diff on two files and returns the number of change
 // hunks (lines in diff output that start with a digit, e.g. "1,3c1,5").

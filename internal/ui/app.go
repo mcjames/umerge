@@ -46,6 +46,11 @@ var (
 	styleChanged = lipgloss.NewStyle().
 			Background(lipgloss.Color("#a6caf0")).
 			Foreground(lipgloss.Color("0"))
+
+	// styleError: comparison, copy, or delete failed for this entry.
+	styleError = lipgloss.NewStyle().
+			Background(lipgloss.Color("#e06c75")).
+			Foreground(lipgloss.Color("0"))
 )
 
 // toolDoneMsg is sent when the external diff/merge tool exits.
@@ -68,6 +73,10 @@ type Model struct {
 	height     int
 	compareCh  <-chan tea.Msg // nil when comparison is done
 	comparing  bool           // true while background comparison is running
+
+	pendingCopyFrom byte   // 0 = none; 'a'/'b'/'c' = 3-way copy awaiting a destination choice
+	prompt          string // status-bar prompt shown while pendingCopyFrom is set
+	flash           string // one-shot status message (e.g. "nothing to copy"), cleared on the next key
 }
 
 // New creates the UI model. middleRoot is "" for two-way mode.
@@ -119,6 +128,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 
 	case tea.KeyMsg:
+		m.flash = ""
+		if m.pendingCopyFrom != 0 {
+			return m.handleCopyDestination(msg.String())
+		}
+
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
@@ -158,6 +172,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+		case "a":
+			m.beginCopy('a', 'l', "left", "Copy from A (left) to:")
+
+		case "b":
+			m.beginCopy('b', 'r', "right", "Copy from B (right) to:")
+
+		case "c":
+			if m.ways == 3 {
+				m.beginCopy('c', 'm', "middle", "Copy from C (middle) to:")
+			}
+
+		case "d":
+			if len(m.flat) > 0 {
+				m.deleteEntry(m.flat[m.cursor])
+			}
+
 		case "pgup":
 			m.offset -= m.viewHeight()
 			if m.offset < 0 {
@@ -183,6 +213,64 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor = len(m.flat) - 1
 			}
 		}
+	}
+	return m, nil
+}
+
+// beginCopy starts a copy sourced from column "letter" (internal side
+// "side"). If the entry at the cursor has nothing on that side, there is
+// nothing to copy — rather than silently doing nothing (the Go bug this
+// replaces) or attempting it anyway and failing with a generic error (what
+// the Python version's letter-based copy actually does — its
+// "if source is None" guard is commented out in Model3.__copy_aux, so it
+// just lets `cp` fail and marks the item ERROR, indistinguishable from a
+// real I/O failure), this fails fast with a clear message before any
+// prompt is shown. A destination is never invalid to choose — copying to
+// an absent side is the normal case, since that's what creates it.
+//
+// Two-way mode has only one possible destination, so the copy runs
+// immediately. Three-way mode starts the two-step "copy from X to:"
+// prompt.
+func (m *Model) beginCopy(letter, side byte, label, prompt string) {
+	if len(m.flat) == 0 {
+		return
+	}
+	e := m.flat[m.cursor]
+	if getSide(e, side) == nil {
+		m.flash = "Nothing to copy: " + label + " is absent"
+		return
+	}
+	if m.ways == 2 {
+		dest := byte('r')
+		if side == 'r' {
+			dest = 'l'
+		}
+		m.copyEntry(e, side, dest)
+		return
+	}
+	m.pendingCopyFrom = letter
+	m.prompt = prompt
+}
+
+// handleCopyDestination resolves the second keypress of a 3-way copy
+// prompt ("Copy from A to:" → b or c). Any key other than one of the two
+// remaining columns cancels the prompt with a visible "Invalid choice"
+// message (matching Python's own wording here, which is fine as-is) rather
+// than silently doing nothing.
+func (m Model) handleCopyDestination(key string) (tea.Model, tea.Cmd) {
+	fromLetter := m.pendingCopyFrom
+	m.pendingCopyFrom = 0
+	m.prompt = ""
+
+	toLetter := byte(0)
+	if len(key) == 1 {
+		toLetter = key[0]
+	}
+	valid := toLetter == 'a' || toLetter == 'b' || toLetter == 'c'
+	if valid && toLetter != fromLetter && len(m.flat) > 0 {
+		m.copyEntry(m.flat[m.cursor], copyLetterToSide(fromLetter), copyLetterToSide(toLetter))
+	} else {
+		m.flash = "Invalid choice"
 	}
 	return m, nil
 }
@@ -245,8 +333,14 @@ func (m Model) View() string {
 	if m.comparing {
 		comparing = "  comparing..."
 	}
-	status := fmt.Sprintf(" %d/%d%s  q quit  ←→/enter collapse  ↑↓/jk move  PgUp/PgDn scroll",
+	status := fmt.Sprintf(" %d/%d%s  q quit  ←→/enter collapse  ↑↓/jk move  PgUp/PgDn scroll  a/b/d copy/del",
 		m.cursor+1, len(m.flat), comparing)
+	switch {
+	case m.prompt != "":
+		status = " " + m.prompt
+	case m.flash != "":
+		status = " " + m.flash
+	}
 	sb.WriteString(styleStatus.Render(fit(status, m.width)))
 
 	return sb.String()
@@ -290,6 +384,16 @@ func (m Model) rowCols(idx int, isCursor bool) ([]string, []lipgloss.Style) {
 
 	for i, p := range paths {
 		switch {
+		case e.Compare == entry.CompareError:
+			// A prior compare, copy, or delete failed for this entry.
+			// Takes priority over the presence-based cases below —
+			// otherwise a failed copy that never set its destination
+			// pointer would just look like a normal absent side.
+			if p != nil {
+				styles[i] = styleError
+			} else {
+				styles[i] = styleNormal
+			}
 		case allPresent && e.IsDir:
 			styles[i] = styleDir
 		case allPresent && e.Compare == entry.Different:

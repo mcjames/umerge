@@ -38,18 +38,21 @@ type Entry struct {
 
 // BuildPair constructs a merged tree for a two-way comparison.
 func BuildPair(leftRoot, rightRoot string) ([]*Entry, error) {
-	return buildTree(&leftRoot, nil, &rightRoot, 0)
+	return BuildTree(&leftRoot, nil, &rightRoot, 0)
 }
 
 // BuildTriple constructs a merged tree for a three-way comparison.
 // middleRoot is the parent/ancestor directory; left and right are the children.
 func BuildTriple(leftRoot, middleRoot, rightRoot string) ([]*Entry, error) {
-	return buildTree(&leftRoot, &middleRoot, &rightRoot, 0)
+	return BuildTree(&leftRoot, &middleRoot, &rightRoot, 0)
 }
 
-// buildTree merges the contents of two or three directories into a unified tree.
-// Any root may be nil when that side lacks a subtree entirely.
-func buildTree(leftRoot, middleRoot, rightRoot *string, depth int) ([]*Entry, error) {
+// BuildTree merges the contents of two or three directories into a unified tree.
+// Any root may be nil when that side lacks a subtree entirely. Exported so
+// callers that need to rebuild a subtree at a nonzero depth (e.g. after a
+// directory copy) can reuse the same merge logic as BuildPair/BuildTriple
+// instead of duplicating it.
+func BuildTree(leftRoot, middleRoot, rightRoot *string, depth int) ([]*Entry, error) {
 	lf := readSorted(leftRoot)
 	mf := readSorted(middleRoot)
 	rf := readSorted(rightRoot)
@@ -129,7 +132,7 @@ func buildTree(leftRoot, middleRoot, rightRoot *string, depth int) ([]*Entry, er
 			if rde != nil && rde.IsDir() {
 				rc = rightPath
 			}
-			e.Children, _ = buildTree(lc, mc, rc, depth+1)
+			e.Children, _ = BuildTree(lc, mc, rc, depth+1)
 		}
 
 		entries = append(entries, e)

@@ -113,6 +113,12 @@ func printHelp(w io.Writer, prog string) {
 	fmt.Fprintf(w, "  Page Up/Page Down      scroll one page\n")
 	fmt.Fprintf(w, "  Left/Right            collapse or expand directory\n")
 	fmt.Fprintf(w, "  Enter                 open file in diff/merge tool; toggle directory\n")
+	fmt.Fprintf(w, "  a                     two-way: copy left to right\n")
+	fmt.Fprintf(w, "                        three-way: copy from A (left), then choose B or C\n")
+	fmt.Fprintf(w, "  b                     two-way: copy right to left\n")
+	fmt.Fprintf(w, "                        three-way: copy from B (right), then choose A or C\n")
+	fmt.Fprintf(w, "  c                     three-way only: copy from C (middle), then choose A or B\n")
+	fmt.Fprintf(w, "  d                     delete current item on every side it exists\n")
 	fmt.Fprintf(w, "  q, Ctrl-C             quit\n")
 	fmt.Fprintf(w, "\nSee umerge(1) for full documentation.\n")
 }
