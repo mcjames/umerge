@@ -466,6 +466,31 @@ tool = "vim"             # vim | emacs | a custom command template
 
 Ported from Python.
 
+### Directory arrow color — ✅ DONE (2026-07-18)
+**Bug found and fixed**, reported as "directory names are yellow, which
+seems wrong." It was right — the whole directory row (arrow *and* name)
+was rendered yellow via a flat `styleDir`. Checked against
+`Settings.py`: Python's `dir_arrow_fg` is 226 (yellow) in *every* category
+(normal/changed/inserted/removed), but `filename_fg` varies by category
+independently — only the little collapse/expand arrow glyph is meant to
+be yellow, as a consistent "this is a folder" cue; the name itself should
+read the same color a file's name would in that category. Fixed:
+`styleDir` renamed to `styleDirArrow` (arrow-only accent, not a whole-row
+style); `rowCols` no longer special-cases `IsDir` for the base column
+style (a present-everywhere directory now correctly falls through to
+`styleNormal`, matching a file); a new `renderCell()` in `app.go` splits
+a directory's fitted text into indent/arrow/rest and applies the yellow
+foreground *only* to the arrow segment, preserving whatever background
+the row's actual status style has (so green/blue/cursor rows keep their
+background under the arrow too — this also matches Python, whose
+`*_dir_arrow_bg` varies per category while `*_dir_arrow_fg` stays 226
+throughout). Skipped for `CompareError` rows — an error should read as
+one uniform red line, not a yellow arrow on red. Verified with unit tests
+(forcing `lipgloss.SetColorProfile(termenv.ANSI256)` since `Render()`
+strips color outside a real terminal) plus a live-pty smoke test
+confirming the actual rendered SGR codes: yellow only around the arrow,
+plain white around the name.
+
 ### 3-way partial presence (one or two sides absent)
 The Python applies more nuanced colors than a blanket "green for absent":
 

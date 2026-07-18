@@ -3,10 +3,12 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 	"umerge/internal/entry"
 )
 
@@ -283,7 +285,7 @@ func TestRowCols_CompareErrorRendersDistinctlyFromNormal(t *testing.T) {
 }
 
 func TestSeparatorStyle_MatchingColumnsUseTheirColor(t *testing.T) {
-	cases := []lipgloss.Style{styleUnique, styleChanged, styleError, styleDir, styleCursor}
+	cases := []lipgloss.Style{styleUnique, styleChanged, styleError, styleDirArrow, styleCursor}
 	for _, s := range cases {
 		got := separatorStyle(s, s)
 		if got.GetBackground() != s.GetBackground() {
@@ -298,7 +300,7 @@ func TestSeparatorStyle_MismatchedColumnsStayNeutral(t *testing.T) {
 		{styleUnique, styleChanged},
 		{styleUnique, styleNormal},
 		{styleChanged, styleError},
-		{styleDir, styleUnique},
+		{styleDirArrow, styleUnique},
 	}
 	for _, tc := range cases {
 		got := separatorStyle(tc.left, tc.right)
@@ -320,5 +322,97 @@ func TestSeparatorStyle_BothNormalMatchesByBackgroundEvenThoughBothUnset(t *test
 	if got.GetForeground() != styleNormal.GetForeground() {
 		t.Errorf("separatorStyle(styleNormal, styleNormal) foreground = %v, want styleNormal's %v",
 			got.GetForeground(), styleNormal.GetForeground())
+	}
+}
+
+// The following cover the bug reported 2026-07-18: an entire directory row
+// rendered yellow, name included. Verified against Python source
+// (Settings.py): dir_arrow_fg is always 226 (yellow) in every category,
+// but filename_fg varies by category — only the arrow glyph should be
+// yellow, never the name.
+
+func TestRowCols_DirectoryPresentEverywhereUsesNormalBaseStyle(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	mkdirAll(t, filepath.Join(leftRoot, "sub"))
+	mkdirAll(t, filepath.Join(rightRoot, "sub"))
+	leftSub := filepath.Join(leftRoot, "sub")
+	rightSub := filepath.Join(rightRoot, "sub")
+	e := &entry.Entry{Name: "sub", IsDir: true, Left: &leftSub, Right: &rightSub}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	_, styles := m.rowCols(0, false /* not the cursor row */)
+
+	for i, s := range styles {
+		if s.GetForeground() != styleNormal.GetForeground() || s.GetBackground() != styleNormal.GetBackground() {
+			t.Errorf("column %d style = %v, want styleNormal (the directory arrow color is applied separately, in renderCell)", i, s)
+		}
+	}
+}
+
+// withForcedColorProfile forces lipgloss to actually emit ANSI codes for
+// the duration of the test, restoring the original profile afterward.
+// Needed because Render() silently strips color when go test isn't
+// attached to a real terminal, which would make it impossible to inspect
+// renderCell's output for the color split it's supposed to produce.
+func withForcedColorProfile(t *testing.T) {
+	t.Helper()
+	original := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(original) })
+}
+
+func TestRenderCell_DirectoryArrowIsYellowButNameIsNot(t *testing.T) {
+	withForcedColorProfile(t)
+
+	e := &entry.Entry{Name: "sub", IsDir: true, Depth: 0}
+	got := renderCell("v sub", 20, styleNormal, e)
+
+	wantArrow := styleNormal.Foreground(lipgloss.Color("226")).Render("v ")
+	wantRest := styleNormal.Render("sub" + strings.Repeat(" ", 15))
+	want := styleNormal.Render("") + wantArrow + wantRest
+	if got != want {
+		t.Errorf("renderCell =\n%q\nwant\n%q", got, want)
+	}
+	// Sanity check on the property this test is actually about: the
+	// yellow SGR code (256-color 226) appears before "sub", and "sub"
+	// itself is not wrapped in that color.
+	yellowIdx := strings.Index(got, "38;5;226")
+	subIdx := strings.Index(got, "sub")
+	if yellowIdx == -1 {
+		t.Fatalf("no yellow (38;5;226) SGR code found in %q", got)
+	}
+	if !(yellowIdx < subIdx) {
+		t.Errorf("yellow code should appear before the name, got yellowIdx=%d subIdx=%d in %q", yellowIdx, subIdx, got)
+	}
+	// The segment rendering "sub" itself must not carry the yellow code —
+	// find the reset immediately before "sub" and confirm no 226 between it
+	// and "sub".
+	resetBeforeSub := strings.LastIndex(got[:subIdx], "\x1b[0m")
+	segment := got[resetBeforeSub:subIdx]
+	if strings.Contains(segment, "226") {
+		t.Errorf("the filename segment should not use the yellow arrow color, got %q", segment)
+	}
+}
+
+func TestRenderCell_NonDirectoryUsesPlainStyle(t *testing.T) {
+	withForcedColorProfile(t)
+
+	e := &entry.Entry{Name: "file.txt", IsDir: false}
+	got := renderCell("file.txt", 20, styleNormal, e)
+	want := styleNormal.Render(fit("file.txt", 20))
+	if got != want {
+		t.Errorf("renderCell for a non-directory =\n%q\nwant\n%q", got, want)
+	}
+}
+
+func TestRenderCell_CompareErrorDirectorySkipsArrowOverride(t *testing.T) {
+	withForcedColorProfile(t)
+
+	e := &entry.Entry{Name: "sub", IsDir: true, Compare: entry.CompareError}
+	got := renderCell("v sub", 20, styleError, e)
+	want := styleError.Render(fit("v sub", 20))
+	if got != want {
+		t.Errorf("renderCell for a CompareError directory =\n%q\nwant\n%q (should be one uniform error-colored block, no yellow arrow)",
+			got, want)
 	}
 }

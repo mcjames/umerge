@@ -30,7 +30,13 @@ var (
 	styleNormal = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("15"))
 
-	styleDir = lipgloss.NewStyle().
+	// styleDirArrow: foreground applied to just the collapse/expand arrow
+	// glyph on a directory row — always yellow, independent of the row's
+	// status color, matching the Python version's dir_arrow convention
+	// (dir_arrow_fg is 226 in every category; only filename_fg varies).
+	// The arrow's background still follows the row's own style, applied
+	// in renderCell — this is deliberately not a whole-row style.
+	styleDirArrow = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("226")) // yellow
 
 	styleCursor = lipgloss.NewStyle().
@@ -322,11 +328,15 @@ func (m Model) View() string {
 	for row := 0; row < m.viewHeight(); row++ {
 		idx := m.offset + row
 		texts, styles := m.rowCols(idx, idx == m.cursor)
+		var e *entry.Entry
+		if idx < len(m.flat) {
+			e = m.flat[idx]
+		}
 		for i := range texts {
 			if i > 0 {
 				sb.WriteString(separatorStyle(styles[i-1], styles[i]).Render("|"))
 			}
-			sb.WriteString(styles[i].Render(fit(texts[i], widths[i])))
+			sb.WriteString(renderCell(texts[i], widths[i], styles[i], e))
 		}
 		sb.WriteByte('\n')
 	}
@@ -397,8 +407,6 @@ func (m Model) rowCols(idx int, isCursor bool) ([]string, []lipgloss.Style) {
 			} else {
 				styles[i] = styleNormal
 			}
-		case allPresent && e.IsDir:
-			styles[i] = styleDir
 		case allPresent && e.Compare == entry.Different:
 			styles[i] = m.diffStyleForCol(e, i)
 		case allPresent:
@@ -460,6 +468,30 @@ func separatorStyle(left, right lipgloss.Style) lipgloss.Style {
 		return left
 	}
 	return styleSep
+}
+
+// renderCell renders one column's already-fitted text. For a directory
+// row, only the collapse/expand arrow glyph gets the dedicated yellow
+// arrow color (matching Python: dir_arrow_fg is always yellow, in every
+// status category, while the filename itself uses that category's normal
+// foreground) — the rest of the text, critically including the directory
+// name, keeps the column's own style. Skipped for CompareError rows: an
+// error should read as a single, unambiguous red line, not a yellow arrow
+// on a red background.
+func renderCell(text string, width int, style lipgloss.Style, e *entry.Entry) string {
+	fitted := fit(text, width)
+	if e == nil || !e.IsDir || e.Compare == entry.CompareError {
+		return style.Render(fitted)
+	}
+	indentLen := 2 * e.Depth
+	if indentLen+2 > len(fitted) {
+		return style.Render(fitted)
+	}
+	indent := fitted[:indentLen]
+	arrow := fitted[indentLen : indentLen+2]
+	rest := fitted[indentLen+2:]
+	arrowStyle := style.Foreground(styleDirArrow.GetForeground())
+	return style.Render(indent) + arrowStyle.Render(arrow) + style.Render(rest)
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
