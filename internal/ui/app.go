@@ -302,14 +302,17 @@ func (m Model) View() string {
 	}
 
 	widths := m.colWidths()
-	sep := styleSep.Render("|")
 
 	var sb strings.Builder
 
 	// Header: each root in its own column.
+	headerStyles := make([]lipgloss.Style, len(m.roots()))
+	for i := range headerStyles {
+		headerStyles[i] = styleHeader
+	}
 	for i, root := range m.roots() {
 		if i > 0 {
-			sb.WriteString(sep)
+			sb.WriteString(separatorStyle(headerStyles[i-1], headerStyles[i]).Render("|"))
 		}
 		sb.WriteString(styleHeader.Render(fit(root, widths[i])))
 	}
@@ -321,7 +324,7 @@ func (m Model) View() string {
 		texts, styles := m.rowCols(idx, idx == m.cursor)
 		for i := range texts {
 			if i > 0 {
-				sb.WriteString(sep)
+				sb.WriteString(separatorStyle(styles[i-1], styles[i]).Render("|"))
 			}
 			sb.WriteString(styles[i].Render(fit(texts[i], widths[i])))
 		}
@@ -439,6 +442,24 @@ func (m Model) diffStyleForCol(e *entry.Entry, col int) lipgloss.Style {
 		}
 	}
 	return styleNormal
+}
+
+// separatorStyle picks the style for the "|" between two adjacent
+// columns. If both columns share the same background color, the
+// separator matches it so the color reads as one continuous block instead
+// of being interrupted by a flat gray bar; otherwise it stays the neutral
+// default. (Python always colors a separator to match the column on its
+// right, regardless of whether the left side matches — we deliberately
+// do it differently: only when both sides agree, which reads as more
+// intentional and doesn't imply a boundary that isn't really there.)
+//
+// lipgloss.Style isn't comparable with ==, so this compares the
+// configured background color instead.
+func separatorStyle(left, right lipgloss.Style) lipgloss.Style {
+	if left.GetBackground() == right.GetBackground() {
+		return left
+	}
+	return styleSep
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────

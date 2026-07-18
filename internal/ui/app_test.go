@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"umerge/internal/entry"
 )
 
@@ -278,5 +279,46 @@ func TestRowCols_CompareErrorRendersDistinctlyFromNormal(t *testing.T) {
 		if got != wantBG {
 			t.Errorf("column %d background = %v, want styleError's %v", i, got, wantBG)
 		}
+	}
+}
+
+func TestSeparatorStyle_MatchingColumnsUseTheirColor(t *testing.T) {
+	cases := []lipgloss.Style{styleUnique, styleChanged, styleError, styleDir, styleCursor}
+	for _, s := range cases {
+		got := separatorStyle(s, s)
+		if got.GetBackground() != s.GetBackground() {
+			t.Errorf("separatorStyle(%v, %v) background = %v, want %v",
+				s, s, got.GetBackground(), s.GetBackground())
+		}
+	}
+}
+
+func TestSeparatorStyle_MismatchedColumnsStayNeutral(t *testing.T) {
+	cases := []struct{ left, right lipgloss.Style }{
+		{styleUnique, styleChanged},
+		{styleUnique, styleNormal},
+		{styleChanged, styleError},
+		{styleDir, styleUnique},
+	}
+	for _, tc := range cases {
+		got := separatorStyle(tc.left, tc.right)
+		if got.GetBackground() != styleSep.GetBackground() {
+			t.Errorf("separatorStyle(left=%v, right=%v) background = %v, want the neutral styleSep background %v",
+				tc.left, tc.right, got.GetBackground(), styleSep.GetBackground())
+		}
+	}
+}
+
+func TestSeparatorStyle_BothNormalMatchesByBackgroundEvenThoughBothUnset(t *testing.T) {
+	// Neither styleNormal nor styleSep sets a background — only a
+	// foreground — so they're indistinguishable by GetBackground() alone.
+	// separatorStyle correctly treats this as "matching" (both sides
+	// unset) and returns the left style; check foreground, the one
+	// property that actually differs between the two, to confirm it's
+	// really styleNormal and not a silent fallback to styleSep.
+	got := separatorStyle(styleNormal, styleNormal)
+	if got.GetForeground() != styleNormal.GetForeground() {
+		t.Errorf("separatorStyle(styleNormal, styleNormal) foreground = %v, want styleNormal's %v",
+			got.GetForeground(), styleNormal.GetForeground())
 	}
 }

@@ -479,10 +479,23 @@ The Python applies more nuanced colors than a blanket "green for absent":
 The last two cases require running a 2-way diff even when one side is
 absent, which the current code skips.
 
-### Separator coloring
-Python colors the `|` separators to match the content on their right side
-(e.g., `CHANGED_VERTICAL_SEP` when the adjacent column is blue).
-Currently a fixed gray.
+### Separator coloring — ✅ DONE (2026-07-18), deliberately not matching Python
+Implemented as `separatorStyle()` in `app.go`: a separator colors to match
+its two adjacent columns only when **both** share the same background;
+otherwise it stays the neutral gray default. **Deliberately different from
+Python**, which always colors a separator to match the column on its
+*right* regardless of whether the left side matches (`__fixed_compute_colors`
+in `View3.py`: `new_colors[1] = colors[1]` — the left separator takes the
+*middle* column's color unconditionally). That always-match-the-right-side
+rule implies a boundary that isn't really there when the two sides
+actually differ; matching only on agreement reads as more intentional.
+Also fixes cursor rows as a side effect — previously even the
+cursor-highlighted row had a flat gray separator breaking up the
+highlight; now it blends since both sides are `styleCursor`. Verified with
+unit tests (`separatorStyle`, comparing via `GetBackground()` since
+`lipgloss.Style` isn't `==`-comparable and `Render()` strips color outside
+a real terminal) plus a live-pty smoke test inspecting the raw ANSI bytes
+directly to confirm the green/gray boundary lands exactly where expected.
 
 ---
 
