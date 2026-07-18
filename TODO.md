@@ -25,11 +25,16 @@ a multi-step modal prompt) grows enough branching to be worth unit-testing
 
 ---
 
-## Priority 0 — Testing catchup
+## Priority 0 — Testing catchup — ✅ DONE (2026-07-18)
 
 One-time backfill for code that predates the testing policy above. Ordered
 by leverage: the tree-diff core first, since Priority 2 is about to modify
 it directly and a regression there breaks everything downstream.
+
+**Done:** all four files below written; `go build ./...`, `go vet ./...`,
+and `go test ./...` are clean — 40 tests passing across
+`internal/entry`, `internal/fileops`, `internal/mergetool`, and
+`internal/ui`.
 
 ### Must do (before/alongside Priority 1)
 - `internal/entry/entry_test.go` — `BuildPair`, `BuildTriple`, `Flatten`.
