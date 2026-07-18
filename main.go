@@ -126,7 +126,7 @@ func printHelp(w io.Writer, prog string) {
 func printVersion(w io.Writer) {
 	fmt.Fprintf(w, "umerge %s\n", version)
 	fmt.Fprintf(w, "Copyright (C) 2026 Michael C. James. All rights reserved.\n")
-	fmt.Fprintf(w, "This software is distributed under the MIT License.\n")
+	fmt.Fprintf(w, "This software is distributed under the BSD 3-Clause License.\n")
 }
 
 // ── utilities ─────────────────────────────────────────────────────────────────
