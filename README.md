@@ -1,5 +1,7 @@
 # umerge
 
+[![CI](https://github.com/mcjames/umerge/actions/workflows/ci.yml/badge.svg)](https://github.com/mcjames/umerge/actions/workflows/ci.yml)
+
 A terminal-native two-way and three-way directory diff and merge tool —
 and a drop-in `git difftool -d` backend.
 
