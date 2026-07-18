@@ -20,8 +20,6 @@ to look at it, then copy or delete files without leaving the terminal.
 
 ![Three-way directory comparison](docs/screenshot-three-way.png)
 
-*(placeholders above — screenshots coming soon)*
-
 ## Why
 
 Beyond Compare and Araxis Merge are excellent, but they're GUI tools —
