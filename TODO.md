@@ -522,6 +522,27 @@ unit tests (`separatorStyle`, comparing via `GetBackground()` since
 a real terminal) plus a live-pty smoke test inspecting the raw ANSI bytes
 directly to confirm the green/gray boundary lands exactly where expected.
 
+**Follow-up bug found and fixed 2026-07-18: separators between two plain
+rows rendered white instead of gray.** Root cause: `GetBackground()`
+returns `lipgloss.NoColor{}` for a style with no background set (e.g.
+`styleNormal`), and the original check only compared for equality — two
+unset backgrounds compared equal, so ordinary/unstyled rows were treated
+as "sharing a color" and the separator inherited `styleNormal`'s *white*
+foreground. Two columns not having a color isn't the same as two columns
+sharing one. Fixed by additionally requiring the shared background not be
+`NoColor{}` before matching. Verified live: a "same everywhere" row's
+separator is now the neutral gray `38;5;240` (was white `97`), while a
+genuinely blue (changed) row's separator still correctly blends into the
+blue.
+
+**Also confirmed 2026-07-18 (not a umerge bug):** wide CJK filenames
+looked misaligned in COSMIC terminal specifically. Checked `fit()`
+directly against every demo filename (Chinese/Japanese/Korean/Cyrillic/
+Greek/Arabic/German) — `runewidth.StringWidth()` and the padding it
+produces are exactly correct in every case, confirmed by direct testing.
+Confirmed fine in WezTerm — this is a COSMIC-terminal rendering quirk
+(still a fairly new terminal), not something to fix in umerge.
+
 ---
 
 ## Priority 11 — Scriptability / launch polish

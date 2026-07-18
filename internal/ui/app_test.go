@@ -285,7 +285,11 @@ func TestRowCols_CompareErrorRendersDistinctlyFromNormal(t *testing.T) {
 }
 
 func TestSeparatorStyle_MatchingColumnsUseTheirColor(t *testing.T) {
-	cases := []lipgloss.Style{styleUnique, styleChanged, styleError, styleDirArrow, styleCursor}
+	// styleDirArrow deliberately excluded: it carries no background at
+	// all (it's an accent color for the arrow glyph only, never a
+	// whole-row style), so it doesn't represent a "real" shared highlight
+	// the way these do.
+	cases := []lipgloss.Style{styleUnique, styleChanged, styleError, styleCursor}
 	for _, s := range cases {
 		got := separatorStyle(s, s)
 		if got.GetBackground() != s.GetBackground() {
@@ -311,17 +315,21 @@ func TestSeparatorStyle_MismatchedColumnsStayNeutral(t *testing.T) {
 	}
 }
 
-func TestSeparatorStyle_BothNormalMatchesByBackgroundEvenThoughBothUnset(t *testing.T) {
-	// Neither styleNormal nor styleSep sets a background — only a
-	// foreground — so they're indistinguishable by GetBackground() alone.
-	// separatorStyle correctly treats this as "matching" (both sides
-	// unset) and returns the left style; check foreground, the one
-	// property that actually differs between the two, to confirm it's
-	// really styleNormal and not a silent fallback to styleSep.
+// Regression test for the bug reported 2026-07-18: separators between two
+// plain/unstyled columns (the ordinary case — most rows aren't
+// green/blue/cursor/error) were rendering white instead of neutral gray,
+// because two unset backgrounds compared equal under GetBackground() and
+// were treated as "sharing a color." Two columns not having a color isn't
+// the same as two columns sharing one.
+func TestSeparatorStyle_BothNormalStaysNeutralNotWhite(t *testing.T) {
 	got := separatorStyle(styleNormal, styleNormal)
-	if got.GetForeground() != styleNormal.GetForeground() {
-		t.Errorf("separatorStyle(styleNormal, styleNormal) foreground = %v, want styleNormal's %v",
-			got.GetForeground(), styleNormal.GetForeground())
+	if got.GetForeground() != styleSep.GetForeground() {
+		t.Errorf("separatorStyle(styleNormal, styleNormal) foreground = %v, want the neutral styleSep foreground %v (not styleNormal's white)",
+			got.GetForeground(), styleSep.GetForeground())
+	}
+	if got.GetBackground() != styleSep.GetBackground() {
+		t.Errorf("separatorStyle(styleNormal, styleNormal) background = %v, want styleSep's %v",
+			got.GetBackground(), styleSep.GetBackground())
 	}
 }
 

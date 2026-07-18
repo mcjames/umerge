@@ -453,18 +453,24 @@ func (m Model) diffStyleForCol(e *entry.Entry, col int) lipgloss.Style {
 }
 
 // separatorStyle picks the style for the "|" between two adjacent
-// columns. If both columns share the same background color, the
-// separator matches it so the color reads as one continuous block instead
-// of being interrupted by a flat gray bar; otherwise it stays the neutral
-// default. (Python always colors a separator to match the column on its
-// right, regardless of whether the left side matches — we deliberately
-// do it differently: only when both sides agree, which reads as more
-// intentional and doesn't imply a boundary that isn't really there.)
+// columns. If both columns share the same *real* background color (green,
+// blue, the cursor's gray, an error's red, ...) the separator matches it
+// so the color reads as one continuous block instead of being interrupted
+// by a flat gray bar. Two plain/unstyled columns don't count as "sharing a
+// color" just because neither has one set — that would color the
+// separator white on every ordinary row, which isn't a highlight, just
+// noise. (Python always colors a separator to match the column on its
+// right, regardless of whether the left side matches — we deliberately do
+// it differently: only when both sides genuinely share a highlight color,
+// which reads as more intentional and doesn't imply a boundary that isn't
+// really there.)
 //
 // lipgloss.Style isn't comparable with ==, so this compares the
-// configured background color instead.
+// configured background color instead. GetBackground() returns
+// lipgloss.NoColor{} when nothing was ever set.
 func separatorStyle(left, right lipgloss.Style) lipgloss.Style {
-	if left.GetBackground() == right.GetBackground() {
+	bg := left.GetBackground()
+	if bg == right.GetBackground() && bg != (lipgloss.NoColor{}) {
 		return left
 	}
 	return styleSep
