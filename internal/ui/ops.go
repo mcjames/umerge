@@ -3,6 +3,7 @@ package ui
 import (
 	"path/filepath"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"umerge/internal/entry"
 	"umerge/internal/fileops"
 )
@@ -113,6 +114,27 @@ func (m *Model) rebuildChildren(e *entry.Entry) {
 	}
 	addDepth(children, e.Depth+1)
 	e.Children = children
+}
+
+// beginRefresh re-enumerates e's subtree from disk (if e is a directory —
+// files have nothing to enumerate) and starts a background re-compare of
+// it, reusing the same goroutine+channel pattern as the initial
+// comparison. Unlike copyEntry's post-copy recompare, this isn't
+// synchronous: a manual refresh isn't piggybacking on an operation that
+// already blocked the UI, so a large subtree could otherwise cause a
+// noticeable stall. The caller (Update()'s "r" handler) guards against
+// starting a refresh while another comparison is already running —
+// compareCh/comparing are shared with the initial scan, so overlapping
+// runs would race on the same channel — mirroring Python's own
+// operation_thread guard (Model2.request_operation).
+func (m *Model) beginRefresh(e *entry.Entry) tea.Cmd {
+	if e.IsDir {
+		m.rebuildChildren(e)
+		m.reflatten()
+	}
+	m.compareCh = startCompare([]*entry.Entry{e}, m.ways)
+	m.comparing = true
+	return listenForCompare(m.compareCh)
 }
 
 // copyEntry copies e from side "from" to side "to" ('l', 'm', or 'r'),

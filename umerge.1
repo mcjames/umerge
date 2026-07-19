@@ -239,6 +239,9 @@ The command invoked depends on how many sides have the file:
 (or
 .Sy ediff3 )
 .El
+.Pp
+The entry is automatically re-compared when the tool exits, in case it
+was edited.
 .It Ic a
 In two-way mode, copy the entry at the cursor from
 .Ar left
@@ -297,6 +300,15 @@ into); there is no confirmation prompt.
 .It Ic d
 Delete the entry at the cursor from every side on which it exists.
 There is no confirmation prompt.
+.It Ic r
+Re-enumerate the entry at the cursor from disk
+.Pq directories only; a file has nothing to enumerate
+and re-compare it, in the background — the same mechanism used for the
+initial comparison.
+Picks up changes made outside
+.Nm
+since it started (files added, removed, or edited by another program).
+Does nothing but flash a message if another comparison is already running.
 .It Ic q , Ctrl-C
 Quit
 .Nm .

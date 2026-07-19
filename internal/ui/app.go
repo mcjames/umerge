@@ -59,8 +59,12 @@ var (
 			Foreground(lipgloss.Color("0"))
 )
 
-// toolDoneMsg is sent when the external diff/merge tool exits.
-type toolDoneMsg struct{}
+// toolDoneMsg is sent when the external diff/merge tool exits. e is the
+// entry that was open in the tool, so it can be re-compared — the file
+// may have been edited.
+type toolDoneMsg struct {
+	e *entry.Entry
+}
 
 // ── Model ─────────────────────────────────────────────────────────────────────
 
@@ -134,7 +138,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.comparing = false
 
 	case toolDoneMsg:
-		// Tool exited. Re-comparison of the edited entry will be added later.
+		// The tool may have edited the file — re-derive its comparison
+		// state rather than leaving whatever it was before. Synchronous
+		// (a single diff/diff3 call): returning from a full-screen
+		// external program already involves a redraw pause, so this
+		// doesn't introduce a new stall, matching the same reasoning
+		// already used for copyEntry's post-copy recompare.
+		if msg.e != nil {
+			m.recompareSubtree(msg.e)
+		}
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -180,7 +192,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.reflatten()
 				} else if cmd := mergetool.Command(e, m.mergeTool); cmd != nil {
 					return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
-						return toolDoneMsg{}
+						return toolDoneMsg{e: e}
 					})
 				}
 			}
@@ -201,6 +213,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.flash = "Read-only mode (--read-only): delete is disabled"
 			} else if len(m.flat) > 0 {
 				m.deleteEntry(m.flat[m.cursor])
+			}
+
+		case "r":
+			if m.comparing {
+				m.flash = "Still comparing — please wait"
+			} else if len(m.flat) > 0 {
+				// beginRefresh mutates m (compareCh/comparing) as a side
+				// effect, so it must run to completion as its own
+				// statement before m is read for the return below —
+				// inlining it as `return m, m.beginRefresh(...)` would
+				// risk m being evaluated before the mutation lands,
+				// depending on evaluation order.
+				cmd := m.beginRefresh(m.flat[m.cursor])
+				return m, cmd
 			}
 
 		case "pgup":

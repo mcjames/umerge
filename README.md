@@ -40,7 +40,10 @@ own directory-diff mechanism.
   `a`/`b`/`c` prompt in three-way) and delete them, on whichever sides
   they exist
 - Jump into `vimdiff`/`vim` or `ediff`/`emacs` to inspect or resolve a
-  difference, right from the tree
+  difference, right from the tree — and it's automatically re-compared
+  when you return, in case you edited it. Re-compare any entry manually
+  with `r` (also re-enumerates directories, picking up files changed
+  outside umerge)
 - Collapsible directories, diff-hunk counts per file, Unicode tree symbols
   (▶/▼) by default, with an ASCII fallback (`-A`/`--ascii`) for terminals
   that render the Unicode ones at the wrong width
@@ -87,6 +90,7 @@ Key bindings (see `umerge --help` or `man umerge` for the full list):
 | `a` / `b` | copy left→right / right→left (two-way); start a copy-from prompt (three-way) |
 | `c` | three-way only: start a copy-from-parent prompt |
 | `d` | delete the entry on every side it exists |
+| `r` | re-enumerate and re-compare the entry at the cursor, in the background |
 | `q`, `Ctrl-C` | quit |
 
 `a`/`b`/`c`/`d` are disabled (with a status-bar message explaining why) when run with `-r`/`--read-only`.

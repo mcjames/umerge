@@ -669,3 +669,155 @@ func TestUpdate_NotReadOnly_CopyAndDeleteStillWork(t *testing.T) {
 		t.Fatal("copy should have run when readOnly is false")
 	}
 }
+
+// The following cover Priority 4 (refresh / re-compare), added 2026-07-19:
+// the "r" key re-enumerates and re-compares the entry at the cursor in the
+// background, and returning from vimdiff/ediff automatically re-compares
+// the entry that was open.
+
+// drainCompare drives m's Update loop with the Cmds a background compare
+// produces (compareResultMsg, ..., compareDoneMsg) until m.comparing goes
+// false, the same way the real Bubble Tea runtime would as messages
+// arrive — up to a generous iteration cap as a safety net against a bug
+// turning this into an infinite loop.
+func drainCompare(t *testing.T, m Model, cmd tea.Cmd) Model {
+	t.Helper()
+	for i := 0; i < 50 && m.comparing; i++ {
+		if cmd == nil {
+			t.Fatal("comparing is true but no Cmd to listen for the next message")
+		}
+		msg := cmd()
+		updated, next := m.Update(msg)
+		m = updated.(Model)
+		cmd = next
+	}
+	if m.comparing {
+		t.Fatal("comparing never became false — drainCompare's iteration cap was hit")
+	}
+	return m
+}
+
+func TestUpdate_KeyR_RefreshesFileEntry(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	leftPath := writeFile(t, leftRoot, "file.txt", "same\n")
+	rightPath := writeFile(t, rightRoot, "file.txt", "same\n")
+	// Deliberately stale/wrong state, as if set before some external
+	// change — refresh should correct it from what's actually on disk.
+	e := &entry.Entry{Name: "file.txt", Left: &leftPath, Right: &rightPath, Compare: entry.Different, NumDiffs: 5}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	updated, cmd := m.Update(keyMsg('r'))
+	m = updated.(Model)
+
+	if !m.comparing {
+		t.Fatal("comparing should be true right after starting a refresh")
+	}
+	if cmd == nil {
+		t.Fatal("expected a non-nil Cmd to listen for the compare result")
+	}
+
+	m = drainCompare(t, m, cmd)
+
+	if e.Compare != entry.Same {
+		t.Errorf("Compare = %v, want Same (refresh should correct the stale Different state)", e.Compare)
+	}
+	if e.NumDiffs != 0 {
+		t.Errorf("NumDiffs = %d, want 0", e.NumDiffs)
+	}
+}
+
+func TestUpdate_KeyR_RefreshesDirectoryEntry(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	mkdirAll(t, filepath.Join(leftRoot, "sub"))
+	mkdirAll(t, filepath.Join(rightRoot, "sub"))
+	leftSub := filepath.Join(leftRoot, "sub")
+	rightSub := filepath.Join(rightRoot, "sub")
+	e := &entry.Entry{Name: "sub", IsDir: true, Left: &leftSub, Right: &rightSub} // no children yet
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	if len(m.flat) != 1 {
+		t.Fatalf("setup: expected 1 entry before refresh, got %d", len(m.flat))
+	}
+
+	// A file appears on disk after the tree was built — e.g. edited
+	// outside umerge — which a stale in-memory tree wouldn't know about
+	// until refreshed.
+	writeFile(t, leftRoot, "sub/new.txt", "hello\n")
+	writeFile(t, rightRoot, "sub/new.txt", "hello\n")
+
+	updated, cmd := m.Update(keyMsg('r'))
+	m = updated.(Model)
+
+	if len(e.Children) != 1 || e.Children[0].Name != "new.txt" {
+		t.Fatalf("rebuildChildren should have picked up the new file immediately, got %+v", e.Children)
+	}
+	if len(m.flat) != 2 {
+		t.Fatalf("m.flat should include the newly-enumerated child without needing collapse/expand, got %+v", m.flat)
+	}
+
+	m = drainCompare(t, m, cmd)
+
+	if e.Children[0].Compare != entry.Same {
+		t.Errorf("new.txt Compare = %v, want Same", e.Children[0].Compare)
+	}
+}
+
+func TestUpdate_KeyR_BlockedWhileComparing(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	leftPath := writeFile(t, leftRoot, "file.txt", "content\n")
+	rightPath := writeFile(t, rightRoot, "file.txt", "content\n")
+	e := &entry.Entry{Name: "file.txt", Left: &leftPath, Right: &rightPath}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	m.comparing = true // simulate an in-progress comparison
+	originalCh := m.compareCh
+
+	updated, cmd := m.Update(keyMsg('r'))
+	m = updated.(Model)
+
+	if m.flash == "" {
+		t.Error("flash should explain that a refresh can't start while already comparing")
+	}
+	if cmd != nil {
+		t.Error("no new Cmd should be started while a comparison is already running")
+	}
+	if m.compareCh != originalCh {
+		t.Error("compareCh should be untouched — starting a second compare would race with the one already running")
+	}
+}
+
+func TestUpdate_ToolDoneMsg_RecomparesTheEditedEntry(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	leftPath := writeFile(t, leftRoot, "file.txt", "one\n")
+	rightPath := writeFile(t, rightRoot, "file.txt", "two\n")
+	e := &entry.Entry{Name: "file.txt", Left: &leftPath, Right: &rightPath, Compare: entry.Different, NumDiffs: 1}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+
+	// Simulate the user having made the file match while it was open in
+	// vimdiff.
+	if err := os.WriteFile(rightPath, []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, _ := m.Update(toolDoneMsg{e: e})
+	m = updated.(Model)
+
+	if e.Compare != entry.Same {
+		t.Errorf("Compare = %v, want Same (returning from the merge tool should trigger a recompare)", e.Compare)
+	}
+	if e.NumDiffs != 0 {
+		t.Errorf("NumDiffs = %d, want 0", e.NumDiffs)
+	}
+}
+
+func TestUpdate_ToolDoneMsg_NilEntryIsSafe(t *testing.T) {
+	m := Model{}
+	updated, cmd := m.Update(toolDoneMsg{})
+	if _, ok := updated.(Model); !ok {
+		t.Fatal("Update should still return a Model")
+	}
+	if cmd != nil {
+		t.Errorf("expected a nil Cmd, got %v", cmd)
+	}
+}

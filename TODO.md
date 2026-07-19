@@ -376,7 +376,7 @@ Keeping these here so they don't get re-litigated later.
 
 ---
 
-## Priority 4 — Refresh / re-compare
+## Priority 4 — Refresh / re-compare — ✅ DONE (2026-07-19)
 
 Ported from Python.
 
@@ -385,6 +385,31 @@ Ported from Python.
   comparison)
 - After vimdiff/ediff exits, automatically re-compare the edited entry
   (`toolDoneMsg` currently does nothing)
+
+**Implementation notes:** both features turned out to reuse existing
+machinery almost entirely rather than needing much new logic.
+`toolDoneMsg` gained an `e *entry.Entry` field (the entry that was open in
+the tool); its handler just calls the same `recompareSubtree` that
+`copyEntry` already uses post-copy, synchronously — returning from a
+full-screen external program already involves a redraw pause, so one more
+`diff` call doesn't introduce a new stall. `r`'s handler (`beginRefresh`
+in `ops.go`) calls the same `rebuildChildren`/`reflatten` pair `copyEntry`
+uses for a directory, then starts a *background* compare via the existing
+`startCompare`/`compareCh`/`comparing` machinery — unlike the tool-exit
+case, a manual refresh isn't piggybacking on an already-blocking
+operation, so a large subtree refreshing synchronously could cause a real
+stall; TODO.md's original note calling for the background goroutine+
+channel pattern was right to insist on it. Guarded against starting a
+refresh while `comparing` is already true (shows a flash message instead)
+since `compareCh`/`comparing` are shared with the initial scan — starting
+a second concurrent compare would race on the same channel. Mirrors
+Python's own `operation_thread` guard (`Model2.request_operation`), not a
+new invention. Verified with unit tests (including driving the actual
+Cmd/message loop the way Bubble Tea's runtime would, not just calling the
+helpers directly) plus a live-pty check: externally edit a file to match
+while umerge has it open showing a stale diff count, press `r`, confirm
+the count updates to `=`. `--help`, README, and `umerge.1` updated for the
+new `r` binding and the auto-recompare-on-tool-exit behavior.
 
 ---
 

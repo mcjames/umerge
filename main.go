@@ -130,6 +130,7 @@ func printHelp(w io.Writer, prog string) {
 	fmt.Fprintf(w, "  c                     three-way only: copy from C (middle), then choose A or B\n")
 	fmt.Fprintf(w, "  d                     delete current item on every side it exists\n")
 	fmt.Fprintf(w, "                        (a/b/c/d are disabled in --read-only mode)\n")
+	fmt.Fprintf(w, "  r                     re-enumerate and re-compare current item (background)\n")
 	fmt.Fprintf(w, "  q, Ctrl-C             quit\n")
 	fmt.Fprintf(w, "\nSee umerge(1) for full documentation.\n")
 }
