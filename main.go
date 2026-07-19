@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mcjames/umerge/internal/entry"
+	"github.com/mcjames/umerge/internal/ui"
 	flag "github.com/spf13/pflag"
-	"umerge/internal/entry"
-	"umerge/internal/ui"
 )
 
 const version = "0.1.0"

@@ -2,8 +2,8 @@ package ui
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
-	"umerge/internal/entry"
-	"umerge/internal/fileops"
+	"github.com/mcjames/umerge/internal/entry"
+	"github.com/mcjames/umerge/internal/fileops"
 )
 
 // compareResultMsg carries the result of one file comparison back to Update.

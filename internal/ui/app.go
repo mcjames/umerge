@@ -9,8 +9,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
-	"umerge/internal/entry"
-	"umerge/internal/mergetool"
+	"github.com/mcjames/umerge/internal/entry"
+	"github.com/mcjames/umerge/internal/mergetool"
 )
 
 // ── styles ────────────────────────────────────────────────────────────────────

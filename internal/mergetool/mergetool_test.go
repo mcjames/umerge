@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"umerge/internal/entry"
+	"github.com/mcjames/umerge/internal/entry"
 )
 
 func strptr(s string) *string { return &s }

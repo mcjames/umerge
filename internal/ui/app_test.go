@@ -8,8 +8,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mcjames/umerge/internal/entry"
 	"github.com/muesli/termenv"
-	"umerge/internal/entry"
 )
 
 func keyMsg(r rune) tea.KeyMsg {

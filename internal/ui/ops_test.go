@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"umerge/internal/entry"
+	"github.com/mcjames/umerge/internal/entry"
 )
 
 func newTestModel(ways int, leftRoot, middleRoot, rightRoot string, entries []*entry.Entry) Model {

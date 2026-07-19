@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"umerge/internal/entry"
-	"umerge/internal/fileops"
+	"github.com/mcjames/umerge/internal/entry"
+	"github.com/mcjames/umerge/internal/fileops"
 )
 
 // copyLetterToSide maps the Python version's column letters — verified

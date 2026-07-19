@@ -5,7 +5,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"umerge/internal/entry"
+	"github.com/mcjames/umerge/internal/entry"
 )
 
 // Command returns an exec.Cmd to view or diff the given entry using the

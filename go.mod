@@ -1,4 +1,4 @@
-module umerge
+module github.com/mcjames/umerge
 
 go 1.26.1
 
