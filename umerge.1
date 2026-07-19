@@ -8,10 +8,12 @@
 .Nm
 .Op Fl m Ar tool
 .Op Fl A | Fl U
+.Op Fl r
 .Ar left right
 .Nm
 .Op Fl m Ar tool
 .Op Fl A | Fl U
+.Op Fl r
 .Ar left parent right
 .Nm
 .Fl h
@@ -89,6 +91,25 @@ This is the default;
 is provided for explicitness or to override a future config-file setting.
 Mutually exclusive with
 .Fl -ascii .
+.It Fl r , Fl -read-only
+Disable the copy
+.Pq Ic a , Ic b , Ic c
+and delete
+.Pq Ic d
+key bindings; only navigation, collapsing/expanding, and viewing in the
+configured diff/merge tool remain active.
+Intended for use as a
+.Xr git 1
+.Cm difftool
+backend
+.Pq see Sx GIT INTEGRATION below :
+that mode presents whichever side matches your actual working tree as
+symbolic links back into it rather than copies, so without
+.Fl -read-only ,
+.Ic d
+would silently unlink the symlink without touching the real file, and
+.Ic a Ns / Ns Ic b Ns / Ns Ic c
+would follow it and genuinely overwrite the real file.
 .It Fl V , Fl -version
 Print version and copyright information to standard output and exit 0.
 .It Fl h , Fl -help
@@ -267,6 +288,43 @@ There is no confirmation prompt.
 Quit
 .Nm .
 .El
+.Sh GIT INTEGRATION
+.Xr git 1 Ns 's
+own directory-diff mode
+.Po
+.Cm git difftool -d ,
+also
+.Cm --dir-diff
+.Pc
+materializes two temporary directories and invokes one external command
+with two paths — the same calling convention
+.Nm
+already uses, so it works as a
+.Cm difftool
+backend:
+.Bd -literal -offset indent
+[difftool "umerge"]
+    cmd = umerge --read-only "$LOCAL" "$REMOTE"
+[diff]
+    tool = umerge
+.Ed
+.Pp
+The
+.Fl -read-only
+is deliberate.
+In this mode, git presents whichever side matches the actual working tree
+as symbolic links back into it, rather than copies, to avoid duplicating
+bytes already on disk.
+Without
+.Fl -read-only ,
+.Ic d
+would silently unlink that symlink without touching the real file, while
+.Ic a Ns / Ns Ic b Ns / Ns Ic c
+would follow it and genuinely overwrite the real working-tree file — with
+no visual indication that anything outside the temporary diff session was
+touched.
+.Fl -read-only
+disables all four so the git integration is a safe viewer by default.
 .Sh EXIT STATUS
 .Ex -std
 .Sh SEE ALSO

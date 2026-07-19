@@ -508,3 +508,83 @@ func TestRenderCell_CompareErrorDirectorySkipsArrowOverride(t *testing.T) {
 			got, want)
 	}
 }
+
+// The following cover --read-only (added 2026-07-19): copy/delete must be
+// fully disabled, with a clear flash message rather than silently doing
+// nothing — motivated by the symlink hazard when umerge is invoked as a
+// `git difftool -d` backend (see TODO.md Priority 3).
+
+func TestUpdate_ReadOnly_TwoWayCopyDisabled(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	leftPath := writeFile(t, leftRoot, "file.txt", "content\n")
+	e := &entry.Entry{Name: "file.txt", Left: &leftPath}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	m.readOnly = true
+	updated, _ := m.Update(keyMsg('a'))
+	m = updated.(Model)
+
+	if e.Right != nil {
+		t.Errorf("no copy should have happened in read-only mode, e.Right = %v", e.Right)
+	}
+	if m.flash == "" {
+		t.Error("flash should explain that copy is disabled in read-only mode")
+	}
+}
+
+func TestUpdate_ReadOnly_ThreeWayCopyPromptNeverStarts(t *testing.T) {
+	leftRoot, middleRoot, rightRoot := t.TempDir(), t.TempDir(), t.TempDir()
+	leftPath := writeFile(t, leftRoot, "file.txt", "content\n")
+	e := &entry.Entry{Name: "file.txt", Left: &leftPath}
+
+	m := newTestModel(3, leftRoot, middleRoot, rightRoot, []*entry.Entry{e})
+	m.readOnly = true
+	updated, _ := m.Update(keyMsg('a'))
+	m = updated.(Model)
+
+	if m.pendingCopyFrom != 0 || m.prompt != "" {
+		t.Errorf("the copy-destination prompt should never start in read-only mode, got pendingCopyFrom=%q prompt=%q",
+			m.pendingCopyFrom, m.prompt)
+	}
+	if m.flash == "" {
+		t.Error("flash should explain that copy is disabled in read-only mode")
+	}
+}
+
+func TestUpdate_ReadOnly_DeleteDisabled(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	leftPath := writeFile(t, leftRoot, "file.txt", "content\n")
+	rightPath := writeFile(t, rightRoot, "file.txt", "content\n")
+	e := &entry.Entry{Name: "file.txt", Left: &leftPath, Right: &rightPath}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	m.readOnly = true
+	updated, _ := m.Update(keyMsg('d'))
+	m = updated.(Model)
+
+	if _, err := os.Stat(leftPath); err != nil {
+		t.Errorf("left file should still exist in read-only mode, stat err = %v", err)
+	}
+	if len(m.entries) != 1 {
+		t.Errorf("entry should not be spliced out in read-only mode, got %+v", m.entries)
+	}
+	if m.flash == "" {
+		t.Error("flash should explain that delete is disabled in read-only mode")
+	}
+}
+
+func TestUpdate_NotReadOnly_CopyAndDeleteStillWork(t *testing.T) {
+	// Regression guard: make sure the read-only gate doesn't accidentally
+	// block the default (non-read-only) case.
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	leftPath := writeFile(t, leftRoot, "file.txt", "content\n")
+	e := &entry.Entry{Name: "file.txt", Left: &leftPath}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	updated, _ := m.Update(keyMsg('a'))
+	m = updated.(Model)
+
+	if e.Right == nil {
+		t.Fatal("copy should have run when readOnly is false")
+	}
+}

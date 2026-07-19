@@ -74,6 +74,7 @@ Usage: umerge [OPTION]... LEFT RIGHT
   -m, --merge tool   external diff/merge tool: vim or emacs (default "vim")
   -A, --ascii        use ASCII tree symbols (>/v) instead of Unicode (▶/▼)
   -U, --unicode      use Unicode tree symbols (▶/▼) — the default
+  -r, --read-only    disable copy/delete; safe for viewing only (e.g. as a git difftool)
 ```
 
 Key bindings (see `umerge --help` or `man umerge` for the full list):
@@ -88,6 +89,8 @@ Key bindings (see `umerge --help` or `man umerge` for the full list):
 | `d` | delete the entry on every side it exists |
 | `q`, `Ctrl-C` | quit |
 
+`a`/`b`/`c`/`d` are disabled (with a status-bar message explaining why) when run with `-r`/`--read-only`.
+
 ### As a `git difftool` backend
 
 git's own directory-diff mode (`git difftool --dir-diff`) materializes two
@@ -96,13 +99,23 @@ umerge's own calling convention:
 
 ```ini
 [difftool "umerge"]
-    cmd = umerge "$LOCAL" "$REMOTE"
+    cmd = umerge --read-only "$LOCAL" "$REMOTE"
 [diff]
     tool = umerge
 ```
 
 Then `git difftool -d` opens the whole set of changes in umerge instead of
 one file at a time.
+
+The `--read-only` is deliberate, not optional flavor: git's dir-diff mode
+gives whichever side matches your actual working tree as *symlinks* back
+into it (not copies), to avoid needlessly duplicating bytes already on
+disk. Without `--read-only`, umerge's `d` (delete) would just unlink that
+symlink — harmless, but looks like it worked when it didn't — while `a`/
+`b`/`c` (copy) *would* follow the symlink and genuinely overwrite your real
+working-tree file, with no visual indication that anything outside the
+temporary diff session was touched. `--read-only` disables all of that,
+so the git integration is a safe viewer by default.
 
 ## Roadmap
 

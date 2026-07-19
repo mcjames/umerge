@@ -72,6 +72,7 @@ type Model struct {
 	rightRoot  string
 	mergeTool  string         // "vim" or "emacs"
 	ascii      bool           // use ASCII tree symbols (>/v) instead of Unicode (▶/▼)
+	readOnly   bool           // disable copy/delete (and any future mutating command)
 	entries    []*entry.Entry // source-of-truth tree
 	flat       []*entry.Entry // current visible list (re-derived on collapse/expand)
 	cursor     int            // index into flat
@@ -87,8 +88,10 @@ type Model struct {
 }
 
 // New creates the UI model. middleRoot is "" for two-way mode. ascii selects
-// ASCII tree symbols (>/v) instead of the Unicode default (▶/▼).
-func New(leftRoot, middleRoot, rightRoot string, entries []*entry.Entry, mergeTool string, ascii bool) Model {
+// ASCII tree symbols (>/v) instead of the Unicode default (▶/▼). readOnly
+// disables copy/delete — see TODO.md Priority 3 for why (git difftool -d's
+// symlinked working-tree side makes those commands unexpectedly hazardous).
+func New(leftRoot, middleRoot, rightRoot string, entries []*entry.Entry, mergeTool string, ascii, readOnly bool) Model {
 	ways := 2
 	if middleRoot != "" {
 		ways = 3
@@ -101,6 +104,7 @@ func New(leftRoot, middleRoot, rightRoot string, entries []*entry.Entry, mergeTo
 		rightRoot:  rightRoot,
 		mergeTool:  mergeTool,
 		ascii:      ascii,
+		readOnly:   readOnly,
 		entries:    entries,
 		compareCh:  ch,
 		comparing:  true,
@@ -193,7 +197,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "d":
-			if len(m.flat) > 0 {
+			if m.readOnly {
+				m.flash = "Read-only mode (--read-only): delete is disabled"
+			} else if len(m.flat) > 0 {
 				m.deleteEntry(m.flat[m.cursor])
 			}
 
@@ -227,7 +233,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // beginCopy starts a copy sourced from column "letter" (internal side
-// "side"). If the entry at the cursor has nothing on that side, there is
+// "side"). Disabled entirely in read-only mode (see Model.readOnly).
+// Otherwise, if the entry at the cursor has nothing on that side, there is
 // nothing to copy — rather than silently doing nothing (the Go bug this
 // replaces) or attempting it anyway and failing with a generic error (what
 // the Python version's letter-based copy actually does — its
@@ -241,6 +248,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // immediately. Three-way mode starts the two-step "copy from X to:"
 // prompt.
 func (m *Model) beginCopy(letter, side byte, label, prompt string) {
+	if m.readOnly {
+		m.flash = "Read-only mode (--read-only): copy is disabled"
+		return
+	}
 	if len(m.flat) == 0 {
 		return
 	}

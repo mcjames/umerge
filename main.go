@@ -22,6 +22,7 @@ func main() {
 	mergeFlag := flag.StringP("merge", "m", "vim", "external diff/merge `tool`: vim or emacs")
 	asciiFlag := flag.BoolP("ascii", "A", false, "use ASCII tree symbols (>/v) instead of Unicode (▶/▼)")
 	unicodeFlag := flag.BoolP("unicode", "U", false, "use Unicode tree symbols (▶/▼) — the default")
+	readOnlyFlag := flag.BoolP("read-only", "r", false, "disable copy/delete; safe for viewing only (e.g. as a git difftool)")
 
 	flag.CommandLine.SortFlags = false
 	flag.Usage = func() {
@@ -92,7 +93,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	m := ui.New(left, middle, right, entries, mergeTool, ascii)
+	m := ui.New(left, middle, right, entries, mergeTool, ascii, *readOnlyFlag)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", prog, err)
@@ -128,6 +129,7 @@ func printHelp(w io.Writer, prog string) {
 	fmt.Fprintf(w, "                        three-way: copy from B (right), then choose A or C\n")
 	fmt.Fprintf(w, "  c                     three-way only: copy from C (middle), then choose A or B\n")
 	fmt.Fprintf(w, "  d                     delete current item on every side it exists\n")
+	fmt.Fprintf(w, "                        (a/b/c/d are disabled in --read-only mode)\n")
 	fmt.Fprintf(w, "  q, Ctrl-C             quit\n")
 	fmt.Fprintf(w, "\nSee umerge(1) for full documentation.\n")
 }

@@ -232,10 +232,11 @@ around.)
 
 - Verify umerge launches cleanly and exits without leftover terminal state
   when invoked non-interactively by `git difftool -d`.
-- Document the `.gitconfig` snippet in the README:
+- Document the `.gitconfig` snippet in the README, using `--read-only`
+  (see the symlink-hazard note below for why):
   ```
   [difftool "umerge"]
-      cmd = umerge "$LOCAL" "$REMOTE"
+      cmd = umerge --read-only "$LOCAL" "$REMOTE"
   [diff]
       tool = umerge
   ```
@@ -263,6 +264,53 @@ marked one") for at least yazi and vifm — vifm in particular already has
 its own basic directory-compare mode, so its users are a natural audience
 to convert. Low effort (docs only, no umerge code changes), same category
 of value as the git/Mercurial config snippets above.
+
+### Symlink hazard when invoked via `git difftool -d`
+**The problem:** `git difftool -d` materializes `LOCAL`/`REMOTE` temp
+directories, but whichever side's content matches the actual working tree
+gets populated with *symlinks* back into the real working tree (git skips
+copying bytes that are already on disk) — the other side gets real,
+disposable copies. umerge can't tell these apart visually; they render
+identically. But `delete` on the symlinked side just unlinks the symlink
+(the real file is untouched — looks like it worked, didn't), and `copy`
+*into* the symlinked side follows it and overwrites the real file (looks
+like a harmless action inside a throwaway temp dir, actually mutates your
+live working tree). Same keystroke, very different blast radius, no visual
+distinction between the two cases.
+
+**`--read-only` flag — ✅ DONE (2026-07-19).** New `-r`/`--read-only` flag:
+`a`/`b`/`c`/`d` (and any future mutating command — Priority 7's `m`/`M`/`R`
+once built) show a flash message explaining they're disabled instead of
+acting. Everything non-mutating (navigate, collapse/expand, launch
+vimdiff/emacs to *view*) still works. The recommended `git difftool`
+`.gitconfig` snippet (Priority 3, git integration section above) now uses
+`umerge --read-only "$LOCAL" "$REMOTE"`, making the git integration safe
+by default without needing any symlink-detection logic at all. Documented
+limitation: this only guarantees umerge's own commands don't mutate
+anything — it can't stop you from opening a file in `vimdiff` and hitting
+`:w` on the symlinked side, since that's a separate process with its own
+write access. That's a much more deliberate action than a single umerge
+keystroke, so treated as an acceptable, clearly-stated gap rather than
+something to also solve here.
+
+**Future, richer alternative (not yet built) — visual signaling instead of
+blocking, for users who explicitly want full read-write in this mode:**
+for each side of each entry, `os.Lstat` to check if it's a symlink, and if
+so `os.Readlink` + resolve to an absolute path and check whether it falls
+*outside* that side's root directory (a symlink that's part of the actual
+project being compared is normal, not a hazard — only one escaping the
+comparison root is). Mark the specific column(s) that are external
+symlinks with a plain `~` appended after the filename (same position as
+the existing diff-count suffix), in a color reserved exclusively for this
+meaning (not yet used: magenta) — deliberately not another emoji/wide
+glyph, given the ambiguous-width pain already hit twice this project (the
+collapse arrows, CJK filenames); `~` is plain ASCII, ties to the existing
+Unix "elsewhere" association, and needs no ascii/unicode fallback of its
+own. Only the affected column gets marked — the other side keeps its
+normal same/changed/absent styling. This would let `git difftool -d` users
+opt out of `--read-only` and get the "resolve the diff by copying" power
+feature back, with the hazard made visible instead of hidden, rather than
+umerge choosing for them between "fully blocked" and "silently dangerous."
 
 ### Out of scope (considered, ruled out)
 Keeping these here so they don't get re-litigated later.
