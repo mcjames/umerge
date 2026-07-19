@@ -193,10 +193,43 @@ found when comparing against Beyond Compare / Araxis Merge, translated to
 what actually matters for a CLI tool (not their GUI-only features like
 image/Word diff, which are out of scope).
 
-- **Respect `.gitignore` by default** — skip `.git`, `node_modules`, build
-  artifacts, etc. without being asked. This is the single highest-leverage
-  item: it's both a general quality-of-life win and what makes umerge feel
-  native when run near a git repo.
+- **Respect `.gitignore` by default — ✅ DONE (2026-07-19).** Added
+  `entry.Ignore` (`internal/entry/ignore.go`), a thin wrapper around
+  `github.com/sabhiram/go-gitignore`. `LoadIgnore` reads a top-level
+  `.gitignore` from each compared root, combines their patterns, and always
+  adds a `.git/` rule so umerge never surfaces git's own internal object
+  store as a difference — even with no `.gitignore` present. `BuildTree`
+  gained `relPath`/`ig` parameters, threaded through the recursive merge so
+  a matched entry (and its whole subtree, since it's skipped before
+  recursing) is excluded before it's ever enumerated or compared, not just
+  hidden after the fact. New `-I`/`--no-gitignore` flag disables filtering
+  entirely (`ig = nil`, which `Ignore.Match` treats as "never matches").
+  `Entry` gained a `RelPath` field so a later manual refresh
+  (`ops.go`'s `rebuildChildren`, from Priority 4's `r` key) can re-test
+  patterns with the correct root-relative path instead of assuming depth 0.
+
+  **Deliberately scoped down, given the time available:** only the
+  top-level `.gitignore` per root is read — real git's cascading,
+  per-directory `.gitignore` support is a known follow-up, not implemented
+  here, since a single repo-root file is the overwhelmingly common case.
+  Wildcard/regex include-exclude filters (the other half of this section)
+  are also still open — this pass covered gitignore only.
+
+  **Gotcha found integrating the library:** its `MatchesPath` compiles a
+  directory-only pattern (trailing `/`, e.g. `build/`) into a regexp that
+  only matches a candidate string that itself ends in `/` — passing the
+  bare directory name without a trailing slash silently fails to match.
+  `Ignore.Match` takes an explicit `isDir bool` and appends the slash
+  itself so callers can't get this wrong. Verified with a unit test
+  (`TestIgnore_DirectoryOnlyPatternRequiresIsDirTrue`) that fails if that
+  handling is removed.
+
+  Verified with unit tests at three layers (`LoadIgnore`/`Match` directly,
+  including negation and root-anchored-vs-nested `/dist` pattern
+  correctness; `BuildPair` end-to-end showing an ignored directory's
+  children never appear; `RelPath` stamping) plus a live-pty check against
+  the real binary confirming `.gitignore`-matched entries and `.git` are
+  hidden by default and reappear with `--no-gitignore`.
 - **Include/exclude filters** — wildcard and/or regex, plus flags to ignore
   whitespace, case, and blank-line-only diffs when comparing file contents.
 - **Fast short-circuit comparison + binary file detection — ✅ DONE

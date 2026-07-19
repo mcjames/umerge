@@ -23,6 +23,7 @@ func main() {
 	asciiFlag := flag.BoolP("ascii", "A", false, "use ASCII tree symbols (>/v) instead of Unicode (▶/▼)")
 	unicodeFlag := flag.BoolP("unicode", "U", false, "use Unicode tree symbols (▶/▼) — the default")
 	readOnlyFlag := flag.BoolP("read-only", "r", false, "disable copy/delete; safe for viewing only (e.g. as a git difftool)")
+	noGitignoreFlag := flag.BoolP("no-gitignore", "I", false, "don't skip files/directories matched by .gitignore")
 
 	flag.CommandLine.SortFlags = false
 	flag.Usage = func() {
@@ -80,20 +81,27 @@ func main() {
 
 	var entries []*entry.Entry
 	var left, middle, right string
+	var ig *entry.Ignore
 
 	if len(absDirs) == 2 {
 		left, right = absDirs[0], absDirs[1]
-		entries, err = entry.BuildPair(left, right)
+		if !*noGitignoreFlag {
+			ig = entry.LoadIgnore(&left, &right)
+		}
+		entries, err = entry.BuildPair(left, right, ig)
 	} else {
 		left, middle, right = absDirs[0], absDirs[1], absDirs[2]
-		entries, err = entry.BuildTriple(left, middle, right)
+		if !*noGitignoreFlag {
+			ig = entry.LoadIgnore(&left, &middle, &right)
+		}
+		entries, err = entry.BuildTriple(left, middle, right, ig)
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", prog, err)
 		os.Exit(1)
 	}
 
-	m := ui.New(left, middle, right, entries, mergeTool, ascii, *readOnlyFlag)
+	m := ui.New(left, middle, right, entries, mergeTool, ascii, *readOnlyFlag, ig)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", prog, err)
@@ -132,6 +140,10 @@ func printHelp(w io.Writer, prog string) {
 	fmt.Fprintf(w, "                        (a/b/c/d are disabled in --read-only mode)\n")
 	fmt.Fprintf(w, "  r                     re-enumerate and re-compare current item (background)\n")
 	fmt.Fprintf(w, "  q, Ctrl-C             quit\n")
+	fmt.Fprintf(w, "\n.gitignore:\n")
+	fmt.Fprintf(w, "  Entries matched by a top-level .gitignore in any compared root (plus\n")
+	fmt.Fprintf(w, "  .git itself) are skipped by default; pass -I/--no-gitignore to see\n")
+	fmt.Fprintf(w, "  everything. Nested .gitignore files are not yet honored.\n")
 	fmt.Fprintf(w, "\nSee umerge(1) for full documentation.\n")
 }
 

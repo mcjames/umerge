@@ -47,6 +47,9 @@ own directory-diff mechanism.
 - Collapsible directories, diff-hunk counts per file, Unicode tree symbols
   (▶/▼) by default, with an ASCII fallback (`-A`/`--ascii`) for terminals
   that render the Unicode ones at the wrong width
+- Respects a top-level `.gitignore` by default (plus always hiding `.git`
+  itself), so comparing a real repo doesn't drown you in build artifacts;
+  pass `-I`/`--no-gitignore` to see everything
 
 ## Installation
 
@@ -78,6 +81,7 @@ Usage: umerge [OPTION]... LEFT RIGHT
   -A, --ascii        use ASCII tree symbols (>/v) instead of Unicode (▶/▼)
   -U, --unicode      use Unicode tree symbols (▶/▼) — the default
   -r, --read-only    disable copy/delete; safe for viewing only (e.g. as a git difftool)
+  -I, --no-gitignore don't skip files/directories matched by .gitignore
 ```
 
 Key bindings (see `umerge --help` or `man umerge` for the full list):
@@ -94,6 +98,11 @@ Key bindings (see `umerge --help` or `man umerge` for the full list):
 | `q`, `Ctrl-C` | quit |
 
 `a`/`b`/`c`/`d` are disabled (with a status-bar message explaining why) when run with `-r`/`--read-only`.
+
+By default, entries matched by a top-level `.gitignore` in any compared
+root are skipped (along with `.git` itself, always). This only reads the
+top-level `.gitignore` — nested per-directory ones aren't honored yet. Pass
+`-I`/`--no-gitignore` to disable this and see everything.
 
 ### As a `git difftool` backend
 
@@ -123,23 +132,24 @@ so the git integration is a safe viewer by default.
 
 ## Roadmap
 
-umerge is a hobby project — a Go rewrite of a Python/ncurses tool of the
-same name the author has maintained for about 20 years. Development is
-tracked in [`TODO.md`](TODO.md); short version:
+Development is tracked in [`TODO.md`](TODO.md); in planned order:
 
-- **Next up** — `.gitignore`-aware filtering by default and include/exclude
-  rules, since those matter more than anything else for trusting the tool
-  on a large, real tree
-- **Planned** — deeper git/Mercurial integration docs, selection and bulk
-  operations, hidden-items toggle, the full three-way merge workflow
-  (`diff3`-based auto-merge, resolution tracking), emacs/ediff support,
-  a `~/.umergerc.toml` config file with theming (including an
+- Wildcard/regex include/exclude filters, plus options to ignore
+  whitespace/case/blank-line-only diffs when comparing file contents
+- Nested per-directory `.gitignore` support (currently only the top-level
+  file is read)
+- Deeper git/Mercurial integration docs
+- Selection and bulk operations
+- Hidden-items toggle
+- The full three-way merge workflow (`diff3`-based auto-merge, resolution
+  tracking)
+- A `~/.umergerc.toml` config file with theming (including an
   Araxis-Merge-flavored color scheme for the launched `vimdiff`/`ediff`
-  session, so the jump from umerge's own colors isn't jarring), and the
-  remaining nuanced 3-way partial-presence colors
-- **Longer-term** — a non-interactive/scriptable output mode, and general
-  robustness work (cancelling background comparison on quit, lazy tree
-  loading for very large trees)
+  session, so the jump from umerge's own colors isn't jarring)
+- The remaining nuanced 3-way partial-presence colors
+- A non-interactive/scriptable output mode
+- General robustness work (cancelling background comparison on quit, lazy
+  tree loading for very large trees)
 
 See `TODO.md` for the full detail, reasoning, and a few bugs found (and
 fixed) along the way.

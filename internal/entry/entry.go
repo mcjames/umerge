@@ -25,6 +25,7 @@ const (
 // Middle is always nil in two-way mode.
 type Entry struct {
 	Name      string  // display name (prefer left, then middle, then right)
+	RelPath   string  // slash-separated path relative to the comparison roots, shared across sides; used to re-test gitignore patterns when a subtree is rebuilt
 	Left      *string // absolute path on the left side; nil if absent
 	Middle    *string // absolute path on the middle side; nil if absent or two-way
 	Right     *string // absolute path on the right side; nil if absent
@@ -40,23 +41,29 @@ type Entry struct {
 	MRDiffs  int // 3-way: hunks between middle and right
 }
 
-// BuildPair constructs a merged tree for a two-way comparison.
-func BuildPair(leftRoot, rightRoot string) ([]*Entry, error) {
-	return BuildTree(&leftRoot, nil, &rightRoot, 0)
+// BuildPair constructs a merged tree for a two-way comparison. ig may be nil
+// to disable gitignore-based filtering entirely.
+func BuildPair(leftRoot, rightRoot string, ig *Ignore) ([]*Entry, error) {
+	return BuildTree(&leftRoot, nil, &rightRoot, 0, "", ig)
 }
 
 // BuildTriple constructs a merged tree for a three-way comparison.
-// middleRoot is the parent/ancestor directory; left and right are the children.
-func BuildTriple(leftRoot, middleRoot, rightRoot string) ([]*Entry, error) {
-	return BuildTree(&leftRoot, &middleRoot, &rightRoot, 0)
+// middleRoot is the parent/ancestor directory; left and right are the
+// children. ig may be nil to disable gitignore-based filtering entirely.
+func BuildTriple(leftRoot, middleRoot, rightRoot string, ig *Ignore) ([]*Entry, error) {
+	return BuildTree(&leftRoot, &middleRoot, &rightRoot, 0, "", ig)
 }
 
-// BuildTree merges the contents of two or three directories into a unified tree.
-// Any root may be nil when that side lacks a subtree entirely. Exported so
-// callers that need to rebuild a subtree at a nonzero depth (e.g. after a
-// directory copy) can reuse the same merge logic as BuildPair/BuildTriple
-// instead of duplicating it.
-func BuildTree(leftRoot, middleRoot, rightRoot *string, depth int) ([]*Entry, error) {
+// BuildTree merges the contents of two or three directories into a unified
+// tree. Any root may be nil when that side lacks a subtree entirely.
+// relPath is the path of this call's contents relative to the comparison
+// roots ("" at the top level) — used both to test ig's patterns and to
+// stamp each Entry's RelPath for later use (e.g. rebuilding a subtree after
+// a refresh, see ops.go's rebuildChildren). ig may be nil to disable
+// filtering. Exported so callers that need to rebuild a subtree at a
+// nonzero depth (e.g. after a directory copy) can reuse the same merge
+// logic as BuildPair/BuildTriple instead of duplicating it.
+func BuildTree(leftRoot, middleRoot, rightRoot *string, depth int, relPath string, ig *Ignore) ([]*Entry, error) {
 	lf := readSorted(leftRoot)
 	mf := readSorted(middleRoot)
 	rf := readSorted(rightRoot)
@@ -116,13 +123,22 @@ func BuildTree(leftRoot, middleRoot, rightRoot *string, depth int) ([]*Entry, er
 			}
 		}
 
+		entryRel := name
+		if relPath != "" {
+			entryRel = relPath + "/" + name
+		}
+		if ig.Match(entryRel, isDir) {
+			continue
+		}
+
 		e := &Entry{
-			Name:   name,
-			Left:   leftPath,
-			Middle: middlePath,
-			Right:  rightPath,
-			IsDir:  isDir,
-			Depth:  depth,
+			Name:    name,
+			RelPath: entryRel,
+			Left:    leftPath,
+			Middle:  middlePath,
+			Right:   rightPath,
+			IsDir:   isDir,
+			Depth:   depth,
 		}
 
 		if isDir {
@@ -136,7 +152,7 @@ func BuildTree(leftRoot, middleRoot, rightRoot *string, depth int) ([]*Entry, er
 			if rde != nil && rde.IsDir() {
 				rc = rightPath
 			}
-			e.Children, _ = BuildTree(lc, mc, rc, depth+1)
+			e.Children, _ = BuildTree(lc, mc, rc, depth+1, entryRel, ig)
 		}
 
 		entries = append(entries, e)

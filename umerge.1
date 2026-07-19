@@ -9,11 +9,13 @@
 .Op Fl m Ar tool
 .Op Fl A | Fl U
 .Op Fl r
+.Op Fl I
 .Ar left right
 .Nm
 .Op Fl m Ar tool
 .Op Fl A | Fl U
 .Op Fl r
+.Op Fl I
 .Ar left parent right
 .Nm
 .Fl h
@@ -110,6 +112,11 @@ symbolic links back into it rather than copies, so without
 would silently unlink the symlink without touching the real file, and
 .Ic a Ns / Ns Ic b Ns / Ns Ic c
 would follow it and genuinely overwrite the real file.
+.It Fl I , Fl -no-gitignore
+Don't skip entries matched by a top-level
+.Pa .gitignore
+in any compared root
+.Pq see Sx GITIGNORE FILTERING below .
 .It Fl V , Fl -version
 Print version and copyright information to standard output and exit 0.
 .It Fl h , Fl -help
@@ -313,6 +320,34 @@ Does nothing but flash a message if another comparison is already running.
 Quit
 .Nm .
 .El
+.Sh GITIGNORE FILTERING
+By default,
+.Nm
+reads a top-level
+.Pa .gitignore
+from each compared root
+.Po
+.Ar left ,
+.Ar parent ,
+and
+.Ar right ,
+whichever are present
+.Pc ,
+combines their patterns, and skips any matching entry entirely — it is
+never enumerated, compared, or shown.
+.Pa .git
+itself is always skipped this way too, even with no
+.Pa .gitignore
+present.
+.Pp
+Only the top-level
+.Pa .gitignore
+is read; patterns in
+.Pa .gitignore
+files nested in subdirectories are not yet honored.
+Pass
+.Fl I , Fl -no-gitignore
+to disable this filtering entirely.
 .Sh GIT INTEGRATION
 .Xr git 1 Ns 's
 own directory-diff mode

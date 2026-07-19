@@ -70,13 +70,14 @@ type toolDoneMsg struct {
 
 // Model is the Bubble Tea model for umerge.
 type Model struct {
-	ways       int    // 2 or 3
+	ways       int // 2 or 3
 	leftRoot   string
 	middleRoot string
 	rightRoot  string
 	mergeTool  string         // "vim" or "emacs"
 	ascii      bool           // use ASCII tree symbols (>/v) instead of Unicode (▶/▼)
 	readOnly   bool           // disable copy/delete (and any future mutating command)
+	ignore     *entry.Ignore  // gitignore-based filtering; nil disables it (--no-gitignore)
 	entries    []*entry.Entry // source-of-truth tree
 	flat       []*entry.Entry // current visible list (re-derived on collapse/expand)
 	cursor     int            // index into flat
@@ -95,7 +96,11 @@ type Model struct {
 // ASCII tree symbols (>/v) instead of the Unicode default (▶/▼). readOnly
 // disables copy/delete — see TODO.md Priority 3 for why (git difftool -d's
 // symlinked working-tree side makes those commands unexpectedly hazardous).
-func New(leftRoot, middleRoot, rightRoot string, entries []*entry.Entry, mergeTool string, ascii, readOnly bool) Model {
+// ig is the compiled gitignore matcher used both for the initial tree (built
+// by the caller before entries is passed in) and for any later manual
+// refresh (see ops.go's beginRefresh/rebuildChildren) — nil disables
+// gitignore filtering entirely.
+func New(leftRoot, middleRoot, rightRoot string, entries []*entry.Entry, mergeTool string, ascii, readOnly bool, ig *entry.Ignore) Model {
 	ways := 2
 	if middleRoot != "" {
 		ways = 3
@@ -109,6 +114,7 @@ func New(leftRoot, middleRoot, rightRoot string, entries []*entry.Entry, mergeTo
 		mergeTool:  mergeTool,
 		ascii:      ascii,
 		readOnly:   readOnly,
+		ignore:     ig,
 		entries:    entries,
 		compareCh:  ch,
 		comparing:  true,
@@ -468,8 +474,9 @@ func (m Model) rowCols(idx int, isCursor bool) ([]string, []lipgloss.Style) {
 //
 // 2-way: both columns blue (only one comparison).
 // 3-way: mirrors Python's per-pair logic —
-//   lmDiffs > 0  →  left + middle blue
-//   mrDiffs > 0  →  middle + right blue
+//
+//	lmDiffs > 0  →  left + middle blue
+//	mrDiffs > 0  →  middle + right blue
 //
 // BinaryDifferent entries never have LMDiffs/MRDiffs set (diff3 is never
 // invoked for them — see fileops.CompareThreeFiles), so they're colored
@@ -684,4 +691,3 @@ func fit(s string, width int) string {
 	s = runewidth.Truncate(s, width, "")
 	return s + strings.Repeat(" ", width-runewidth.StringWidth(s))
 }
-

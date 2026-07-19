@@ -107,7 +107,7 @@ func (m *Model) rebuildChildren(e *entry.Entry) {
 	if e.Middle != nil {
 		mid = e.Middle
 	}
-	children, err := entry.BuildTree(e.Left, mid, e.Right, 0)
+	children, err := entry.BuildTree(e.Left, mid, e.Right, 0, e.RelPath, m.ignore)
 	if err != nil {
 		setSubtreeError(e)
 		return

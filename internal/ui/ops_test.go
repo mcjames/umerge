@@ -158,7 +158,7 @@ func TestCopyEntry_Directory_NewContentsVisibleInFlatWithoutCollapseExpand(t *te
 	rightSub := filepath.Join(rightRoot, "sub")
 
 	e := &entry.Entry{Name: "sub", IsDir: true, Left: &leftSub, Right: &rightSub} // no children yet
-	sibling := &entry.Entry{Name: "zzz"}                                         // just to prove the rest of the tree is untouched
+	sibling := &entry.Entry{Name: "zzz"}                                          // just to prove the rest of the tree is untouched
 
 	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e, sibling})
 	if len(m.flat) != 2 {

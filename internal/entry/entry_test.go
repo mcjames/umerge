@@ -42,7 +42,7 @@ func TestBuildPair_OneSideOnly(t *testing.T) {
 	mkfile(t, left, "common.txt")
 	mkfile(t, right, "common.txt")
 
-	entries, err := BuildPair(left, right)
+	entries, err := BuildPair(left, right, nil)
 	if err != nil {
 		t.Fatalf("BuildPair: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestBuildPair_InterleavedSortOrder(t *testing.T) {
 	mkfile(t, right, "c")
 	mkfile(t, right, "d")
 
-	entries, err := BuildPair(left, right)
+	entries, err := BuildPair(left, right, nil)
 	if err != nil {
 		t.Fatalf("BuildPair: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestBuildPair_NestedDirsAndDepth(t *testing.T) {
 	mkfile(t, left, "sub/nested.txt")
 	mkfile(t, right, "sub/nested.txt")
 
-	entries, err := BuildPair(left, right)
+	entries, err := BuildPair(left, right, nil)
 	if err != nil {
 		t.Fatalf("BuildPair: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestBuildPair_MissingRoot(t *testing.T) {
 	right := t.TempDir()
 	mkfile(t, right, "only.txt")
 
-	entries, err := BuildPair(filepath.Join(right, "does-not-exist"), right)
+	entries, err := BuildPair(filepath.Join(right, "does-not-exist"), right, nil)
 	if err != nil {
 		t.Fatalf("BuildPair should not error on a missing root, got: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestBuildPair_EmptyDirs(t *testing.T) {
 	left := t.TempDir()
 	right := t.TempDir()
 
-	entries, err := BuildPair(left, right)
+	entries, err := BuildPair(left, right, nil)
 	if err != nil {
 		t.Fatalf("BuildPair: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestBuildTriple_AllThreePresent(t *testing.T) {
 	mkfile(t, middle, "f.txt")
 	mkfile(t, right, "f.txt")
 
-	entries, err := BuildTriple(left, middle, right)
+	entries, err := BuildTriple(left, middle, right, nil)
 	if err != nil {
 		t.Fatalf("BuildTriple: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestBuildTriple_RemovedAndInserted(t *testing.T) {
 	mkfile(t, left, "inserted.txt")
 	mkfile(t, right, "inserted.txt")
 
-	entries, err := BuildTriple(left, middle, right)
+	entries, err := BuildTriple(left, middle, right, nil)
 	if err != nil {
 		t.Fatalf("BuildTriple: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestBuildTriple_InterleavedSortOrder(t *testing.T) {
 	mkfile(t, middle, "y")
 	mkfile(t, right, "z")
 
-	entries, err := BuildTriple(left, middle, right)
+	entries, err := BuildTriple(left, middle, right, nil)
 	if err != nil {
 		t.Fatalf("BuildTriple: %v", err)
 	}
@@ -314,7 +314,7 @@ func TestBuildPair_EmptyDirOnOneSide(t *testing.T) {
 	right := t.TempDir()
 	mkdirOnly(t, left, "emptydir")
 
-	entries, err := BuildPair(left, right)
+	entries, err := BuildPair(left, right, nil)
 	if err != nil {
 		t.Fatalf("BuildPair: %v", err)
 	}
