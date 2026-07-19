@@ -53,7 +53,14 @@ own directory-diff mechanism.
 
 ## Installation
 
-umerge isn't packaged anywhere yet — build it from source:
+umerge isn't packaged in any package manager yet, but it installs cleanly
+with Go's own tooling:
+
+```sh
+go install github.com/mcjames/umerge@latest
+```
+
+Or build it from source:
 
 ```sh
 git clone https://github.com/mcjames/umerge.git
