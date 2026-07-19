@@ -3,6 +3,7 @@ package mergetool
 import (
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"umerge/internal/entry"
 )
@@ -53,11 +54,25 @@ func emacsCommand(paths []string) *exec.Cmd {
 		return exec.Command("emacs", paths[0])
 	case 2:
 		return exec.Command("emacs", "--eval",
-			fmt.Sprintf(`(ediff-files "%s" "%s")`, paths[0], paths[1]))
+			fmt.Sprintf(`(ediff-files "%s" "%s")`, elispQuote(paths[0]), elispQuote(paths[1])))
 	default:
 		return exec.Command("emacs", "--eval",
-			fmt.Sprintf(`(ediff3 "%s" "%s" "%s")`, paths[0], paths[1], paths[2]))
+			fmt.Sprintf(`(ediff3 "%s" "%s" "%s")`, elispQuote(paths[0]), elispQuote(paths[1]), elispQuote(paths[2])))
 	}
+}
+
+// elispQuote escapes s for safe embedding inside an Emacs Lisp string
+// literal (backslash, then double-quote). Without this, a filename
+// containing a literal `"` breaks out of the string early — e.g. a path
+// like `foo".png") (shell-command "...`  — turning the rest of the
+// attacker-controlled filename into arbitrary Lisp that --eval happily
+// runs. Not hypothetical: umerge's own stated use case includes comparing
+// vendor code drops and other untrusted trees, where a crafted filename is
+// exactly the kind of thing that could show up.
+func elispQuote(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return s
 }
 
 // presentPaths returns the non-nil paths of e in left→middle→right order.

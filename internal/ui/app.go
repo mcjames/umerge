@@ -237,6 +237,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "d":
 			if m.readOnly {
 				m.flash = "Read-only mode (--read-only): delete is disabled"
+			} else if m.comparing {
+				// See beginCopy's comment: deleteEntry splices the target
+				// out of m.entries while the background scan may still be
+				// concurrently reading the tree it's part of.
+				m.flash = "Still comparing — please wait"
 			} else if len(m.flat) > 0 {
 				m.deleteEntry(m.flat[m.cursor])
 			}
@@ -302,6 +307,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) beginCopy(letter, side byte, label, prompt string) {
 	if m.readOnly {
 		m.flash = "Read-only mode (--read-only): copy is disabled"
+		return
+	}
+	// The background comparison goroutine (see startCompare/walkAndCompare)
+	// concurrently reads Left/Middle/Right/Children on entries throughout
+	// the tree, with no synchronization. copyEntry writes those same fields
+	// (setSide, rebuildChildren replacing Children wholesale), so allowing
+	// a copy while comparing is true would be a real, unsynchronized data
+	// race — not hypothetical, just ordinary use (copy something before a
+	// large tree's initial scan finishes). Blocking here is sufficient for
+	// the 3-way prompt too: 'r' (the only thing that could start a new
+	// compare) is intercepted by Update() whenever pendingCopyFrom is set,
+	// so comparing can't flip false→true while a prompt is open once this
+	// check has passed.
+	if m.comparing {
+		m.flash = "Still comparing — please wait"
 		return
 	}
 	if len(m.flat) == 0 {

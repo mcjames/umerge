@@ -939,6 +939,75 @@ func TestUpdate_KeyR_BlockedWhileComparing(t *testing.T) {
 	}
 }
 
+// The following three cover a data race found during a pre-release review:
+// copyEntry/deleteEntry mutate Entry.Left/Middle/Right/Children while the
+// background comparison goroutine (startCompare/walkAndCompare) may be
+// concurrently reading those same fields elsewhere in the tree, with no
+// synchronization between them. 'r' (refresh) was already guarded against
+// this; 'a'/'b'/'c' (copy) and 'd' (delete) were not. These confirm the
+// guard now matches 'r's.
+
+func TestUpdate_KeyA_TwoWay_BlockedWhileComparing(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	leftPath := writeFile(t, leftRoot, "file.txt", "content\n")
+	e := &entry.Entry{Name: "file.txt", Left: &leftPath}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	m.comparing = true // simulate an in-progress comparison
+
+	updated, _ := m.Update(keyMsg('a'))
+	m = updated.(Model)
+
+	if m.flash == "" {
+		t.Error("flash should explain that copy can't run while already comparing")
+	}
+	if e.Right != nil {
+		t.Error("no copy should have happened while comparing")
+	}
+}
+
+func TestUpdate_KeyA_ThreeWay_PromptBlockedWhileComparing(t *testing.T) {
+	leftRoot, middleRoot, rightRoot := t.TempDir(), t.TempDir(), t.TempDir()
+	leftPath := writeFile(t, leftRoot, "file.txt", "content\n")
+	e := &entry.Entry{Name: "file.txt", Left: &leftPath}
+
+	m := newTestModel(3, leftRoot, middleRoot, rightRoot, []*entry.Entry{e})
+	m.comparing = true
+
+	updated, _ := m.Update(keyMsg('a'))
+	m = updated.(Model)
+
+	if m.pendingCopyFrom != 0 {
+		t.Error("the copy prompt should never start while comparing — starting it would let a later handleCopyDestination race with the scan once comparing finishes mid-prompt")
+	}
+	if m.flash == "" {
+		t.Error("flash should explain that copy can't start while already comparing")
+	}
+}
+
+func TestUpdate_KeyD_BlockedWhileComparing(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	leftPath := writeFile(t, leftRoot, "file.txt", "content\n")
+	rightPath := writeFile(t, rightRoot, "file.txt", "content\n")
+	e := &entry.Entry{Name: "file.txt", Left: &leftPath, Right: &rightPath}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	m.comparing = true
+
+	updated, _ := m.Update(keyMsg('d'))
+	m = updated.(Model)
+
+	if m.flash == "" {
+		t.Error("flash should explain that delete can't run while already comparing")
+	}
+	if _, err := os.Stat(leftPath); err != nil {
+		t.Errorf("file should not have been deleted while comparing: %v", err)
+	}
+	if len(m.flat) != 1 {
+		t.Errorf("entry should not have been removed from the tree while comparing, len(flat) = %d", len(m.flat))
+	}
+}
+
 func TestUpdate_ToolDoneMsg_RecomparesTheEditedEntry(t *testing.T) {
 	leftRoot, rightRoot := t.TempDir(), t.TempDir()
 	leftPath := writeFile(t, leftRoot, "file.txt", "one\n")
