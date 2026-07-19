@@ -171,6 +171,19 @@ Zero differences; files are identical.
 Files differ in
 .Ar n
 hunks.
+.It bin
+The files differ and at least one side is binary content; a hunk count
+does not apply, since
+.Nm
+never runs
+.Xr diff 1 Ns / Ns Xr diff3 1
+on binary files
+.Po
+it detects this itself first, the same way
+.Xr git 1
+does: checking whether the leading bytes contain a NUL byte
+.Pc .
+This entry is still highlighted the same as any other difference.
 .El
 In two-way mode the count appears in the left column.
 In three-way mode the left column shows the count of hunks between

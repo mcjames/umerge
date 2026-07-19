@@ -14,6 +14,10 @@ const (
 	Same
 	Different
 	CompareError
+	// BinaryDifferent means the files differ and at least one side is
+	// binary content — hunk-counting doesn't apply, since diff/diff3 are
+	// never invoked for this case (see fileops.CompareTwoFiles).
+	BinaryDifferent
 )
 
 // Entry is one node in the merged directory tree.

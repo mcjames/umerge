@@ -199,12 +199,51 @@ image/Word diff, which are out of scope).
   native when run near a git repo.
 - **Include/exclude filters** — wildcard and/or regex, plus flags to ignore
   whitespace, case, and blank-line-only diffs when comparing file contents.
-- **Fast short-circuit comparison** — use size+mtime (and optionally a
-  checksum) to skip full content diff on files that are obviously
-  unchanged, instead of always shelling out to `diff`. Needed for umerge to
-  stay responsive on large trees.
-- **Binary file detection** — report "differ (binary)" instead of running
-  text diff/vimdiff against binary content.
+- **Fast short-circuit comparison + binary file detection — ✅ DONE
+  (2026-07-19), built together.** `fileops.CompareTwoFiles`/
+  `CompareThreeFiles` now: (1) stat + compare content in fixed-size chunks
+  to *prove* equality without loading whole files into memory — if equal,
+  return immediately without ever invoking `diff`/`diff3`; (2) if not
+  equal, sniff the first ~8000 bytes of each file for a NUL byte (the same
+  heuristic git uses); if any file is binary, return a `BinaryDifferent`
+  result — again without invoking `diff`/`diff3`. Only text files that
+  are genuinely different still shell out, for an accurate hunk count.
+  Deliberately **not** using git's mtime-trusting shortcut (same
+  size+mtime ⇒ assume unchanged): that has a real, if rare, false-negative
+  risk, which is an acceptable trade for rsync's use case but not for a
+  tool whose whole job is being trusted for vendor-drop/merge review
+  decisions — correctness over the extra speed that heuristic would buy.
+  Decided against shelling out to `file`/libmagic for binary detection
+  too: that would just relocate the subprocess cost we're eliminating, for
+  detection detail (specific format identification) we don't actually need
+  for a binary/text yes-no decision.
+  
+  **Uncovered a real, pre-existing correctness bug while designing this:**
+  two genuinely different binary files were silently rendered as `Same`.
+  `diff` prints `Binary files ... differ` for differing binary content
+  (verified empirically) rather than a normal hunk-formatted diff; the old
+  hunk-counting logic (count lines starting with a digit) found none and
+  reported 0 diffs, which `compareEntry` then read as "identical." Not
+  something introduced this session — already present in shipped code.
+  Also verified empirically: `diff3` doesn't degrade as gracefully — it
+  fails outright (`diff3: diff failed: Binary files ... differ`, exit 2)
+  the moment any pairwise diff inside it hits binary content, so there's
+  no partial per-pair result to preserve for a mixed binary/text triple;
+  the whole entry is marked `BinaryDifferent` uniformly in that case,
+  matching diff3's own all-or-nothing behavior rather than inventing
+  finer-grained information it doesn't give us.
+  
+  New `entry.CompareState` value `BinaryDifferent`: same "changed" blue
+  color as a real text difference (including all three columns in 3-way,
+  since LMDiffs/MRDiffs aren't meaningful here and `diffStyleForCol`
+  special-cases this rather than falling through its normal per-pair
+  logic), but shows `bin` instead of a numeric hunk count. Verified with
+  unit tests — including setting `PATH` to an empty directory to *prove*
+  `diff`/`diff3` are never invoked for the identical and binary cases,
+  not just that the right answer comes back — plus a live-pty check
+  against real random-content binary files confirming the fix (previously
+  silently `=`/white, now correctly `bin`/blue). `umerge.1`'s "Diff
+  counts" section documents the new `bin` marker.
 - **Rename/move detection** (stretch) — a file moved within the tree
   shouldn't render as a delete+insert pair. Hard to get fully right; lower
   priority than the items above, but a strong "professional tool" signal.

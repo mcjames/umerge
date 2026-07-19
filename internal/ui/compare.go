@@ -59,9 +59,13 @@ func compareEntry(e *entry.Entry, ways int) compareResultMsg {
 	msg := compareResultMsg{e: e}
 
 	if ways == 2 {
-		n, err := fileops.CompareTwoFiles(*e.Left, *e.Right)
+		n, binary, err := fileops.CompareTwoFiles(*e.Left, *e.Right)
 		if err != nil {
 			msg.state = entry.CompareError
+			return msg
+		}
+		if binary {
+			msg.state = entry.BinaryDifferent
 			return msg
 		}
 		msg.numDiffs = n
@@ -74,9 +78,13 @@ func compareEntry(e *entry.Entry, ways int) compareResultMsg {
 	}
 
 	// 3-way
-	lm, mr, err := fileops.CompareThreeFiles(*e.Left, *e.Middle, *e.Right)
+	lm, mr, binary, err := fileops.CompareThreeFiles(*e.Left, *e.Middle, *e.Right)
 	if err != nil {
 		msg.state = entry.CompareError
+		return msg
+	}
+	if binary {
+		msg.state = entry.BinaryDifferent
 		return msg
 	}
 	msg.lmDiffs = lm

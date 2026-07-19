@@ -357,6 +357,87 @@ func TestRowCols_DirectoryPresentEverywhereUsesNormalBaseStyle(t *testing.T) {
 	}
 }
 
+// The following cover BinaryDifferent rendering, added 2026-07-19 alongside
+// the fast short-circuit comparison and binary-file detection: two
+// genuinely different binary files must render distinctly from "Same"
+// (the bug that motivated this work), get the same "changed" blue as a
+// real text diff, and show a "bin" marker instead of a hunk count, which
+// wouldn't mean anything for binary content.
+
+func TestRowCols_BinaryDifferentTwoWayGetsChangedStyle(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	leftPath := filepath.Join(leftRoot, "file.bin")
+	rightPath := filepath.Join(rightRoot, "file.bin")
+	if err := os.WriteFile(leftPath, []byte{0x00, 0x01}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rightPath, []byte{0x00, 0xFF}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e := &entry.Entry{Name: "file.bin", Left: &leftPath, Right: &rightPath, Compare: entry.BinaryDifferent}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	_, styles := m.rowCols(0, false)
+
+	wantBG := styleChanged.GetBackground()
+	for i, s := range styles {
+		if s.GetBackground() != wantBG {
+			t.Errorf("column %d background = %v, want styleChanged's %v", i, s.GetBackground(), wantBG)
+		}
+		if s.GetBackground() == styleNormal.GetBackground() {
+			t.Errorf("column %d rendered as styleNormal — a BinaryDifferent entry must not look like Same", i)
+		}
+	}
+}
+
+func TestRowCols_BinaryDifferentThreeWayAllColumnsChanged(t *testing.T) {
+	// BinaryDifferent entries never have LMDiffs/MRDiffs set, so
+	// diffStyleForCol's normal per-pair logic (which would see zero
+	// counts and wrongly conclude "unchanged") must be bypassed for this
+	// state — all three columns should show as changed.
+	leftRoot, middleRoot, rightRoot := t.TempDir(), t.TempDir(), t.TempDir()
+	leftPath, middlePath, rightPath := filepath.Join(leftRoot, "f"), filepath.Join(middleRoot, "f"), filepath.Join(rightRoot, "f")
+	e := &entry.Entry{
+		Name: "f", Left: &leftPath, Middle: &middlePath, Right: &rightPath,
+		Compare: entry.BinaryDifferent, LMDiffs: 0, MRDiffs: 0,
+	}
+
+	m := newTestModel(3, leftRoot, middleRoot, rightRoot, []*entry.Entry{e})
+	_, styles := m.rowCols(0, false)
+
+	wantBG := styleChanged.GetBackground()
+	for i, s := range styles {
+		if s.GetBackground() != wantBG {
+			t.Errorf("column %d background = %v, want styleChanged's %v (BinaryDifferent should mark every column, not rely on LM/MR counts)",
+				i, s.GetBackground(), wantBG)
+		}
+	}
+}
+
+func TestDiffCounts_BinaryDifferentReturnsNoNumericCount(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	e := &entry.Entry{Name: "file.bin", Compare: entry.BinaryDifferent, NumDiffs: 0}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	counts := m.diffCounts(e)
+	for i, c := range counts {
+		if c != nil {
+			t.Errorf("counts[%d] = %v, want nil — a hunk count doesn't apply to binary content", i, *c)
+		}
+	}
+}
+
+func TestEntryText_BinaryDifferentShowsBinMarker(t *testing.T) {
+	path := "/left/file.bin"
+	e := &entry.Entry{Name: "file.bin", Left: &path, Compare: entry.BinaryDifferent}
+
+	got := entryText(e, &path, nil, false)
+	want := "  file.bin bin"
+	if got != want {
+		t.Errorf("entryText = %q, want %q", got, want)
+	}
+}
+
 // Default-flip decided 2026-07-18 (see TODO.md Priority 9, CLAUDE.md):
 // Unicode tree symbols (▶/▼) are now the default, with -A/--ascii as the
 // fallback for terminals that render the ambiguous-width glyphs
