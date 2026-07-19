@@ -127,18 +127,16 @@ umerge is a hobby project — a Go rewrite of a Python/ncurses tool of the
 same name the author has maintained for about 20 years. Development is
 tracked in [`TODO.md`](TODO.md); short version:
 
-- ✅ **Done** — automated test coverage for the pre-existing core, and
-  file operations (copy/delete, in both two-way and three-way mode)
-- **Next up** — filtering (`.gitignore`-aware by default, include/exclude
-  rules) and fast short-circuit comparison, since those matter more than
-  anything else for trusting the tool on a large, real tree
-- **Planned** — deeper git/Mercurial integration docs, refresh/re-compare,
-  selection and bulk operations, the full three-way merge workflow
+- **Next up** — `.gitignore`-aware filtering by default and include/exclude
+  rules, since those matter more than anything else for trusting the tool
+  on a large, real tree
+- **Planned** — deeper git/Mercurial integration docs, selection and bulk
+  operations, hidden-items toggle, the full three-way merge workflow
   (`diff3`-based auto-merge, resolution tracking), emacs/ediff support,
   a `~/.umergerc.toml` config file with theming (including an
   Araxis-Merge-flavored color scheme for the launched `vimdiff`/`ediff`
-  session, so the jump from umerge's own colors isn't jarring), and
-  further coloring refinements
+  session, so the jump from umerge's own colors isn't jarring), and the
+  remaining nuanced 3-way partial-presence colors
 - **Longer-term** — a non-interactive/scriptable output mode, and general
   robustness work (cancelling background comparison on quit, lazy tree
   loading for very large trees)
