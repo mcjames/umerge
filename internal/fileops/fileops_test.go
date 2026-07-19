@@ -76,6 +76,28 @@ func TestCompareTwoFiles_NonexistentFile(t *testing.T) {
 	}
 }
 
+// TestCompareTwoFiles_PermissionDenied is a static precondition, not a race:
+// the file already lacks read permission before CompareTwoFiles is called,
+// so os.Open (in filesEqual) fails deterministically. No timing/goroutine
+// coordination is needed to exercise this path.
+func TestCompareTwoFiles_PermissionDenied(t *testing.T) {
+	skipIfRoot(t)
+	dir := t.TempDir()
+	// Same size as left, so filesEqual's size short-circuit doesn't return
+	// early — it must actually os.Open right, which is where the
+	// permission error surfaces.
+	left := writeFile(t, dir, "left.txt", "content\n")
+	right := writeFile(t, dir, "right.txt", "content\n")
+	if err := os.Chmod(right, 0o000); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := CompareTwoFiles(left, right)
+	if err == nil {
+		t.Fatal("expected an error comparing against an unreadable file, got nil")
+	}
+}
+
 func TestCompareThreeFiles_AllIdentical(t *testing.T) {
 	dir := t.TempDir()
 	left := writeFile(t, dir, "left.txt", "same\n")
@@ -180,6 +202,32 @@ func TestCompareThreeFiles_NonexistentFile(t *testing.T) {
 	_, _, _, err := CompareThreeFiles(left, middle, filepath.Join(dir, "does-not-exist.txt"))
 	if err == nil {
 		t.Fatal("expected an error comparing against a nonexistent file, got nil")
+	}
+}
+
+func TestCompareThreeFiles_PermissionDenied(t *testing.T) {
+	skipIfRoot(t)
+	dir := t.TempDir()
+	left := writeFile(t, dir, "left.txt", "content\n")
+	middle := writeFile(t, dir, "middle.txt", "content\n")
+	right := writeFile(t, dir, "right.txt", "content\n")
+	if err := os.Chmod(right, 0o000); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, _, err := CompareThreeFiles(left, middle, right)
+	if err == nil {
+		t.Fatal("expected an error comparing against an unreadable file, got nil")
+	}
+}
+
+// skipIfRoot skips a permission-denied test when running as root: root
+// bypasses file permission bits entirely, so os.Open would succeed on a
+// 0o000 file and the test's premise wouldn't hold.
+func skipIfRoot(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits are bypassed, so this test's premise doesn't hold")
 	}
 }
 

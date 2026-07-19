@@ -97,6 +97,57 @@ func TestCompareEntry_TwoWayError(t *testing.T) {
 	}
 }
 
+// TestCompareEntry_TwoWayPermissionDenied confirms the goroutine path that
+// runs a real background comparison (compareEntry, invoked from
+// walkAndCompare) classifies an unreadable file as CompareError instead of
+// crashing or hanging — the concern flagged when discussing Priority 12's
+// robustness gaps. This is a static precondition (chmod before comparing),
+// not a race against the comparison goroutine: filesEqual's os.Stat call
+// succeeds on an unreadable file, but its subsequent os.Open fails, so the
+// error path is deterministic.
+func TestCompareEntry_TwoWayPermissionDenied(t *testing.T) {
+	skipIfRoot(t)
+	dir := t.TempDir()
+	left := writeFile(t, dir, "left.txt", "content\n")
+	right := writeFile(t, dir, "right.txt", "content\n")
+	if err := os.Chmod(right, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	e := &entry.Entry{Left: &left, Right: &right}
+
+	msg := compareEntry(e, 2)
+	if msg.state != entry.CompareError {
+		t.Errorf("state = %v, want CompareError", msg.state)
+	}
+}
+
+func TestCompareEntry_ThreeWayPermissionDenied(t *testing.T) {
+	skipIfRoot(t)
+	dir := t.TempDir()
+	left := writeFile(t, dir, "left.txt", "content\n")
+	middle := writeFile(t, dir, "middle.txt", "content\n")
+	right := writeFile(t, dir, "right.txt", "content\n")
+	if err := os.Chmod(right, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	e := &entry.Entry{Left: &left, Middle: &middle, Right: &right}
+
+	msg := compareEntry(e, 3)
+	if msg.state != entry.CompareError {
+		t.Errorf("state = %v, want CompareError", msg.state)
+	}
+}
+
+// skipIfRoot skips a permission-denied test when running as root: root
+// bypasses file permission bits entirely, so os.Open would succeed on a
+// 0o000 file and the test's premise wouldn't hold.
+func skipIfRoot(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits are bypassed, so this test's premise doesn't hold")
+	}
+}
+
 func TestCompareEntry_ThreeWaySame(t *testing.T) {
 	dir := t.TempDir()
 	left := writeFile(t, dir, "left.txt", "same\n")

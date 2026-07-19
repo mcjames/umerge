@@ -703,14 +703,21 @@ observations from the Go rewrite, not present in the Python version).
 - **Cancel background comparison on quit** — the comparison goroutine
   currently runs to completion even after the user presses `q`. Pass a
   `context.Context` so it stops promptly.
-- **Error state display** — ✅ partially done as of Priority 1's bug fixes
-  (2026-07-18): `styleError` now renders `CompareError` entries in red
-  instead of white, and copy/delete failures set it. Still open: nothing
-  yet causes a *compare-time* failure (e.g. permission denied reading a
-  file during the initial background comparison) to actually reach
-  `CompareError` — `compareEntry` treats a `diff`/`diff3` exec error as
-  `CompareError` already, so this may already work, but hasn't been
-  exercised/tested for that path specifically.
+- **Error state display** — ✅ done (2026-07-19): `styleError` renders
+  `CompareError` entries in red instead of white, copy/delete failures set
+  it, and the compare-time path (e.g. permission denied reading a file
+  during background comparison) is now covered by tests too:
+  `TestCompareTwoFiles_PermissionDenied`/`TestCompareThreeFiles_PermissionDenied`
+  (`fileops`), `TestCompareEntry_TwoWayPermissionDenied`/`_ThreeWay...`
+  (`compareEntry`), and `TestUpdate_KeyR_PermissionDeniedFileBecomesCompareError`
+  (full async goroutine/channel/`Update` pipeline via `drainCompare`). It's a
+  static precondition (chmod before comparing), not a race — `filesEqual`'s
+  `os.Stat` succeeds on an unreadable file but the subsequent `os.Open`
+  fails deterministically, so no goroutine-timing coordination was needed.
+  Scope was deliberately kept to "does a real failure get reported
+  accurately," not hardening against adversarial/concurrent permission
+  changes (TOCTOU races, symlink swaps mid-compare, etc.) — out of scope by
+  design.
 - **Lazy tree loading** — `BuildPair`/`BuildTriple` currently read the
   entire directory tree eagerly at startup. For very large trees a lazy
   approach (load children on expand) would improve startup time.

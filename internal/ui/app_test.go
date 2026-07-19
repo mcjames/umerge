@@ -726,6 +726,34 @@ func TestUpdate_KeyR_RefreshesFileEntry(t *testing.T) {
 	}
 }
 
+// TestUpdate_KeyR_PermissionDeniedFileBecomesCompareError drives a
+// permission-denied comparison through the real async pipeline (the same
+// startCompare goroutine + channel + Update loop the live app uses, via
+// drainCompare) rather than calling compareEntry directly. The point is to
+// confirm the failure is reported accurately — ends up CompareError, no
+// panic, no hang — not to prove anything about concurrent/adversarial
+// permission changes.
+func TestUpdate_KeyR_PermissionDeniedFileBecomesCompareError(t *testing.T) {
+	skipIfRoot(t)
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	leftPath := writeFile(t, leftRoot, "file.txt", "content\n")
+	rightPath := writeFile(t, rightRoot, "file.txt", "content\n")
+	if err := os.Chmod(rightPath, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	e := &entry.Entry{Name: "file.txt", Left: &leftPath, Right: &rightPath}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	updated, cmd := m.Update(keyMsg('r'))
+	m = updated.(Model)
+
+	m = drainCompare(t, m, cmd)
+
+	if e.Compare != entry.CompareError {
+		t.Errorf("Compare = %v, want CompareError", e.Compare)
+	}
+}
+
 func TestUpdate_KeyR_RefreshesDirectoryEntry(t *testing.T) {
 	leftRoot, rightRoot := t.TempDir(), t.TempDir()
 	mkdirAll(t, filepath.Join(leftRoot, "sub"))
