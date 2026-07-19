@@ -41,8 +41,9 @@ own directory-diff mechanism.
   they exist
 - Jump into `vimdiff`/`vim` or `ediff`/`emacs` to inspect or resolve a
   difference, right from the tree
-- Collapsible directories, diff-hunk counts per file, ASCII tree symbols
-  chosen for consistent terminal column widths
+- Collapsible directories, diff-hunk counts per file, Unicode tree symbols
+  (▶/▼) by default, with an ASCII fallback (`-A`/`--ascii`) for terminals
+  that render the Unicode ones at the wrong width
 
 ## Installation
 
@@ -71,6 +72,8 @@ Usage: umerge [OPTION]... LEFT RIGHT
   -h, --help         display this help and exit
   -V, --version      print version and exit
   -m, --merge tool   external diff/merge tool: vim or emacs (default "vim")
+  -A, --ascii        use ASCII tree symbols (>/v) instead of Unicode (▶/▼)
+  -U, --unicode      use Unicode tree symbols (▶/▼) — the default
 ```
 
 Key bindings (see `umerge --help` or `man umerge` for the full list):

@@ -357,6 +357,49 @@ func TestRowCols_DirectoryPresentEverywhereUsesNormalBaseStyle(t *testing.T) {
 	}
 }
 
+// Default-flip decided 2026-07-18 (see TODO.md Priority 9, CLAUDE.md):
+// Unicode tree symbols (▶/▼) are now the default, with -A/--ascii as the
+// fallback for terminals that render the ambiguous-width glyphs
+// incorrectly (confirmed: COSMIC terminal; confirmed fine: WezTerm).
+
+func TestEntryText_UnicodeArrowsByDefault(t *testing.T) {
+	path := "/left/sub"
+	collapsed := &entry.Entry{Name: "sub", IsDir: true, Collapsed: true, Left: &path}
+	expanded := &entry.Entry{Name: "sub", IsDir: true, Collapsed: false, Left: &path}
+
+	if got := entryText(collapsed, &path, nil, false); got != "▶ sub" {
+		t.Errorf("collapsed, unicode: got %q, want %q", got, "▶ sub")
+	}
+	if got := entryText(expanded, &path, nil, false); got != "▼ sub" {
+		t.Errorf("expanded, unicode: got %q, want %q", got, "▼ sub")
+	}
+}
+
+func TestEntryText_ASCIIArrowsWhenRequested(t *testing.T) {
+	path := "/left/sub"
+	collapsed := &entry.Entry{Name: "sub", IsDir: true, Collapsed: true, Left: &path}
+	expanded := &entry.Entry{Name: "sub", IsDir: true, Collapsed: false, Left: &path}
+
+	if got := entryText(collapsed, &path, nil, true); got != "> sub" {
+		t.Errorf("collapsed, ascii: got %q, want %q", got, "> sub")
+	}
+	if got := entryText(expanded, &path, nil, true); got != "v sub" {
+		t.Errorf("expanded, ascii: got %q, want %q", got, "v sub")
+	}
+}
+
+func TestEntryText_FileNeverGetsAnArrowEitherMode(t *testing.T) {
+	path := "/left/file.txt"
+	e := &entry.Entry{Name: "file.txt", IsDir: false, Left: &path}
+
+	if got := entryText(e, &path, nil, false); got != "  file.txt" {
+		t.Errorf("unicode mode: got %q, want %q", got, "  file.txt")
+	}
+	if got := entryText(e, &path, nil, true); got != "  file.txt" {
+		t.Errorf("ascii mode: got %q, want %q", got, "  file.txt")
+	}
+}
+
 // withForcedColorProfile forces lipgloss to actually emit ANSI codes for
 // the duration of the test, restoring the original profile afterward.
 // Needed because Render() silently strips color when go test isn't
@@ -369,11 +412,11 @@ func withForcedColorProfile(t *testing.T) {
 	t.Cleanup(func() { lipgloss.SetColorProfile(original) })
 }
 
-func TestRenderCell_DirectoryArrowIsYellowButNameIsNot(t *testing.T) {
+func TestRenderCell_DirectoryArrowIsYellowButNameIsNot_ASCII(t *testing.T) {
 	withForcedColorProfile(t)
 
 	e := &entry.Entry{Name: "sub", IsDir: true, Depth: 0}
-	got := renderCell("v sub", 20, styleNormal, e)
+	got := renderCell("v sub", 20, styleNormal, e, true)
 
 	wantArrow := styleNormal.Foreground(lipgloss.Color("226")).Render("v ")
 	wantRest := styleNormal.Render("sub" + strings.Repeat(" ", 15))
@@ -381,22 +424,63 @@ func TestRenderCell_DirectoryArrowIsYellowButNameIsNot(t *testing.T) {
 	if got != want {
 		t.Errorf("renderCell =\n%q\nwant\n%q", got, want)
 	}
-	// Sanity check on the property this test is actually about: the
-	// yellow SGR code (256-color 226) appears before "sub", and "sub"
-	// itself is not wrapped in that color.
-	yellowIdx := strings.Index(got, "38;5;226")
-	subIdx := strings.Index(got, "sub")
+	assertArrowYellowNameNot(t, got, "sub")
+}
+
+// Regression coverage for switching the default to Unicode arrows
+// (2026-07-18): "▶"/"▼" are 3-byte UTF-8 sequences, unlike the 2-byte
+// ASCII "> "/"v " — renderCell's byte-offset slicing has to account for
+// that or it corrupts the split (or the string) instead of just getting
+// the wrong column width.
+func TestRenderCell_DirectoryArrowIsYellowButNameIsNot_Unicode(t *testing.T) {
+	withForcedColorProfile(t)
+
+	e := &entry.Entry{Name: "sub", IsDir: true, Depth: 0, Collapsed: false}
+	got := renderCell("▼ sub", 20, styleNormal, e, false)
+
+	wantArrow := styleNormal.Foreground(lipgloss.Color("226")).Render("▼ ")
+	wantRest := styleNormal.Render("sub" + strings.Repeat(" ", 15))
+	want := styleNormal.Render("") + wantArrow + wantRest
+	if got != want {
+		t.Errorf("renderCell =\n%q\nwant\n%q", got, want)
+	}
+	assertArrowYellowNameNot(t, got, "sub")
+}
+
+// TestRenderCell_DirectoryWithIndent_Unicode covers a nonzero Depth
+// combined with the (wider, non-ASCII-byte-length) Unicode arrow, since
+// the indent and arrow byte offsets are computed independently.
+func TestRenderCell_DirectoryWithIndent_Unicode(t *testing.T) {
+	withForcedColorProfile(t)
+
+	e := &entry.Entry{Name: "sub", IsDir: true, Depth: 2, Collapsed: true}
+	got := renderCell("    ▶ sub", 20, styleNormal, e, false)
+
+	wantIndent := styleNormal.Render("    ")
+	wantArrow := styleNormal.Foreground(lipgloss.Color("226")).Render("▶ ")
+	wantRest := styleNormal.Render("sub" + strings.Repeat(" ", 11))
+	want := wantIndent + wantArrow + wantRest
+	if got != want {
+		t.Errorf("renderCell =\n%q\nwant\n%q", got, want)
+	}
+	assertArrowYellowNameNot(t, got, "sub")
+}
+
+// assertArrowYellowNameNot checks that the yellow (256-color 226) SGR
+// code appears before name in the rendered output, and that the segment
+// rendering name itself doesn't carry that color.
+func assertArrowYellowNameNot(t *testing.T, rendered, name string) {
+	t.Helper()
+	yellowIdx := strings.Index(rendered, "38;5;226")
+	nameIdx := strings.Index(rendered, name)
 	if yellowIdx == -1 {
-		t.Fatalf("no yellow (38;5;226) SGR code found in %q", got)
+		t.Fatalf("no yellow (38;5;226) SGR code found in %q", rendered)
 	}
-	if !(yellowIdx < subIdx) {
-		t.Errorf("yellow code should appear before the name, got yellowIdx=%d subIdx=%d in %q", yellowIdx, subIdx, got)
+	if !(yellowIdx < nameIdx) {
+		t.Errorf("yellow code should appear before the name, got yellowIdx=%d nameIdx=%d in %q", yellowIdx, nameIdx, rendered)
 	}
-	// The segment rendering "sub" itself must not carry the yellow code —
-	// find the reset immediately before "sub" and confirm no 226 between it
-	// and "sub".
-	resetBeforeSub := strings.LastIndex(got[:subIdx], "\x1b[0m")
-	segment := got[resetBeforeSub:subIdx]
+	resetBeforeName := strings.LastIndex(rendered[:nameIdx], "\x1b[0m")
+	segment := rendered[resetBeforeName:nameIdx]
 	if strings.Contains(segment, "226") {
 		t.Errorf("the filename segment should not use the yellow arrow color, got %q", segment)
 	}
@@ -406,7 +490,7 @@ func TestRenderCell_NonDirectoryUsesPlainStyle(t *testing.T) {
 	withForcedColorProfile(t)
 
 	e := &entry.Entry{Name: "file.txt", IsDir: false}
-	got := renderCell("file.txt", 20, styleNormal, e)
+	got := renderCell("file.txt", 20, styleNormal, e, false)
 	want := styleNormal.Render(fit("file.txt", 20))
 	if got != want {
 		t.Errorf("renderCell for a non-directory =\n%q\nwant\n%q", got, want)
@@ -417,7 +501,7 @@ func TestRenderCell_CompareErrorDirectorySkipsArrowOverride(t *testing.T) {
 	withForcedColorProfile(t)
 
 	e := &entry.Entry{Name: "sub", IsDir: true, Compare: entry.CompareError}
-	got := renderCell("v sub", 20, styleError, e)
+	got := renderCell("v sub", 20, styleError, e, true)
 	want := styleError.Render(fit("v sub", 20))
 	if got != want {
 		t.Errorf("renderCell for a CompareError directory =\n%q\nwant\n%q (should be one uniform error-colored block, no yellow arrow)",

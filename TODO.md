@@ -423,8 +423,31 @@ Priority 10's color work has one real home instead of staying hardcoded.
 |------|-------------|
 | `-c` / `--colors` | color depth: `auto`, `256`, `8`, `none` |
 | `--merge` | merge tool: `vim` (default) or `emacs` |
-| `-A` / `--ascii` | force ASCII tree symbols (already using ASCII; expose as flag) |
-| `-U` / `--unicode` | force Unicode tree symbols |
+| `-U` / `--unicode` | force Unicode tree symbols (`▶`/`▼`) — the default |
+| `-A` / `--ascii` | fall back to ASCII tree symbols (`>`/`v`) |
+
+**Default flip — ✅ DONE (2026-07-18):** brought back the Unicode
+collapse/expand arrows (▶ U+25B6 / ▼ U+25BC) as the default — they look
+noticeably better than the ASCII `>`/`v` fallback, and most terminals
+(confirmed: WezTerm) render them at the correct width. `CLAUDE.md`
+documented *why* umerge had switched to ASCII in the first place: those
+characters have "Ambiguous" East Asian Width and some terminals render
+them at the wrong column width, shifting text — the same underlying bug
+class as the CJK-filename misalignment diagnosed the same day (confirmed
+to be a COSMIC-terminal rendering bug, not a umerge one). Rather than
+staying on ASCII everywhere to dodge a COSMIC-specific bug, defaulted to
+the better-looking Unicode arrows with `-A`/`--ascii` as the escape hatch.
+
+Implementation note: the byte-slicing in `renderCell` (added for the
+arrow-color fix) assumed the arrow was always 2 *bytes* — true for ASCII
+`"> "` but not for `"▶ "`, which is 4 bytes (▶ is a 3-byte UTF-8 sequence).
+Had to make the byte-length arrow-agnostic (computed from which mode is
+active) rather than hardcoded, or it would have corrupted the split for
+every directory row once Unicode became the default. Caught before it
+shipped — verified with new unit tests for both symbol sets plus a live
+capture confirming clean rendering (no corruption) with real CJK directory
+names. `--help`, README, and `umerge.1` (SYNOPSIS, OPTIONS, and "Tree
+symbols") all updated to document `-A`/`-U`.
 
 ### Config file — `~/.umergerc.toml`
 Deliberate departure from the Python version's INI format — TOML is a

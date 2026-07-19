@@ -20,6 +20,8 @@ func main() {
 	helpFlag := flag.BoolP("help", "h", false, "display this help and exit")
 	versionFlag := flag.BoolP("version", "V", false, "print version and exit")
 	mergeFlag := flag.StringP("merge", "m", "vim", "external diff/merge `tool`: vim or emacs")
+	asciiFlag := flag.BoolP("ascii", "A", false, "use ASCII tree symbols (>/v) instead of Unicode (▶/▼)")
+	unicodeFlag := flag.BoolP("unicode", "U", false, "use Unicode tree symbols (▶/▼) — the default")
 
 	flag.CommandLine.SortFlags = false
 	flag.Usage = func() {
@@ -48,6 +50,13 @@ func main() {
 		flag.Usage()
 		os.Exit(1)
 	}
+
+	if *asciiFlag && *unicodeFlag {
+		fmt.Fprintf(os.Stderr, "%s: --ascii and --unicode are mutually exclusive\n", prog)
+		flag.Usage()
+		os.Exit(1)
+	}
+	ascii := *asciiFlag
 
 	args := flag.Args()
 	if len(args) != 2 && len(args) != 3 {
@@ -83,7 +92,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	m := ui.New(left, middle, right, entries, mergeTool)
+	m := ui.New(left, middle, right, entries, mergeTool, ascii)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", prog, err)

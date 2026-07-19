@@ -7,9 +7,11 @@
 .Sh SYNOPSIS
 .Nm
 .Op Fl m Ar tool
+.Op Fl A | Fl U
 .Ar left right
 .Nm
 .Op Fl m Ar tool
+.Op Fl A | Fl U
 .Ar left parent right
 .Nm
 .Fl h
@@ -71,6 +73,22 @@ and
 .Sy ediff3
 to diff three files.
 .El
+.It Fl A , Fl -ascii
+Use ASCII tree symbols
+.Pq Sy > No / Sy v
+instead of the Unicode default
+.Pq Sy ▶ No / Sy ▼ .
+Useful on terminals that render the Unicode symbols at the wrong column
+width, shifting the display (their East Asian Width is "Ambiguous," so
+this varies by terminal).
+.It Fl U , Fl -unicode
+Use Unicode tree symbols
+.Pq Sy ▶ No / Sy ▼ .
+This is the default;
+.Fl -unicode
+is provided for explicitness or to override a future config-file setting.
+Mutually exclusive with
+.Fl -ascii .
 .It Fl V , Fl -version
 Print version and copyright information to standard output and exit 0.
 .It Fl h , Fl -help
@@ -84,11 +102,17 @@ A status bar at the bottom of the screen shows the current cursor
 position, whether background comparison is still running, and a summary
 of available key bindings.
 .Ss Tree symbols
-Each directory entry is preceded by a two-character symbol:
-.Bl -tag -width "> "
-.It >
+Each directory entry is preceded by a two-character symbol, by default the
+Unicode
+.Sy ▶
+/
+.Sy ▼
+triangles
+.Pq Fl -ascii No falls back to Sy > No / Sy v :
+.Bl -tag -width "▶ (unicode) / > (ascii)  "
+.It ▶ No (unicode) / Sy > No (ascii)
 The directory is collapsed and its children are not shown.
-.It v
+.It ▼ No (unicode) / Sy v No (ascii)
 The directory is expanded and its children are visible below it.
 .It (two spaces)
 The entry is a regular file.

@@ -71,6 +71,7 @@ type Model struct {
 	middleRoot string
 	rightRoot  string
 	mergeTool  string         // "vim" or "emacs"
+	ascii      bool           // use ASCII tree symbols (>/v) instead of Unicode (▶/▼)
 	entries    []*entry.Entry // source-of-truth tree
 	flat       []*entry.Entry // current visible list (re-derived on collapse/expand)
 	cursor     int            // index into flat
@@ -85,8 +86,9 @@ type Model struct {
 	flash           string // one-shot status message (e.g. "nothing to copy"), cleared on the next key
 }
 
-// New creates the UI model. middleRoot is "" for two-way mode.
-func New(leftRoot, middleRoot, rightRoot string, entries []*entry.Entry, mergeTool string) Model {
+// New creates the UI model. middleRoot is "" for two-way mode. ascii selects
+// ASCII tree symbols (>/v) instead of the Unicode default (▶/▼).
+func New(leftRoot, middleRoot, rightRoot string, entries []*entry.Entry, mergeTool string, ascii bool) Model {
 	ways := 2
 	if middleRoot != "" {
 		ways = 3
@@ -98,6 +100,7 @@ func New(leftRoot, middleRoot, rightRoot string, entries []*entry.Entry, mergeTo
 		middleRoot: middleRoot,
 		rightRoot:  rightRoot,
 		mergeTool:  mergeTool,
+		ascii:      ascii,
 		entries:    entries,
 		compareCh:  ch,
 		comparing:  true,
@@ -336,7 +339,7 @@ func (m Model) View() string {
 			if i > 0 {
 				sb.WriteString(separatorStyle(styles[i-1], styles[i]).Render("|"))
 			}
-			sb.WriteString(renderCell(texts[i], widths[i], styles[i], e))
+			sb.WriteString(renderCell(texts[i], widths[i], styles[i], e, m.ascii))
 		}
 		sb.WriteByte('\n')
 	}
@@ -376,7 +379,7 @@ func (m Model) rowCols(idx int, isCursor bool) ([]string, []lipgloss.Style) {
 
 	counts := m.diffCounts(e)
 	for i, p := range paths {
-		texts[i] = entryText(e, p, counts[i])
+		texts[i] = entryText(e, p, counts[i], m.ascii)
 	}
 
 	if isCursor {
@@ -484,18 +487,30 @@ func separatorStyle(left, right lipgloss.Style) lipgloss.Style {
 // name, keeps the column's own style. Skipped for CompareError rows: an
 // error should read as a single, unambiguous red line, not a yellow arrow
 // on a red background.
-func renderCell(text string, width int, style lipgloss.Style, e *entry.Entry) string {
+func renderCell(text string, width int, style lipgloss.Style, e *entry.Entry, ascii bool) string {
 	fitted := fit(text, width)
 	if e == nil || !e.IsDir || e.Compare == entry.CompareError {
 		return style.Render(fitted)
 	}
+	// The arrow is 2 *bytes* for the ASCII symbols ("> "/"v ") but 4 for
+	// the Unicode ones ("▶ "/"▼ " — each triangle is a 3-byte UTF-8
+	// sequence plus a 1-byte space). Both symbols within a mode share the
+	// same byte length, so this is a fixed lookup, not a per-call
+	// computation. runewidth.Truncate (inside fit) only ever cuts at rune
+	// boundaries, so this is always a valid slice point unless the arrow
+	// itself got truncated away entirely — which the bounds check below
+	// catches.
+	arrowBytes := len(collapsedArrowUnicode)
+	if ascii {
+		arrowBytes = len(collapsedArrowASCII)
+	}
 	indentLen := 2 * e.Depth
-	if indentLen+2 > len(fitted) {
+	if indentLen+arrowBytes > len(fitted) {
 		return style.Render(fitted)
 	}
 	indent := fitted[:indentLen]
-	arrow := fitted[indentLen : indentLen+2]
-	rest := fitted[indentLen+2:]
+	arrow := fitted[indentLen : indentLen+arrowBytes]
+	rest := fitted[indentLen+arrowBytes:]
 	arrowStyle := style.Foreground(styleDirArrow.GetForeground())
 	return style.Render(indent) + arrowStyle.Render(arrow) + style.Render(rest)
 }
@@ -565,10 +580,22 @@ func (m Model) diffCounts(e *entry.Entry) []*int {
 	return counts
 }
 
+// collapsedArrow/expandedArrow: the Unicode default looks better and
+// renders correctly in most terminals (confirmed: WezTerm); some
+// terminals give these "Ambiguous" East Asian Width characters the wrong
+// column width (confirmed: COSMIC terminal), which is what the ascii
+// fallback (-A/--ascii) is for. See CLAUDE.md and TODO.md Priority 9.
+const (
+	collapsedArrowUnicode = "▶ "
+	expandedArrowUnicode  = "▼ "
+	collapsedArrowASCII   = "> "
+	expandedArrowASCII    = "v "
+)
+
 // entryText returns the display text for one side of an entry.
 // count is non-nil when a diff count should be appended.
 // Returns "" (blank cell) when path is nil.
-func entryText(e *entry.Entry, path *string, count *int) string {
+func entryText(e *entry.Entry, path *string, count *int, ascii bool) string {
 	if path == nil {
 		return ""
 	}
@@ -576,9 +603,17 @@ func entryText(e *entry.Entry, path *string, count *int) string {
 	var arrow string
 	if e.IsDir {
 		if e.Collapsed {
-			arrow = "> "
+			if ascii {
+				arrow = collapsedArrowASCII
+			} else {
+				arrow = collapsedArrowUnicode
+			}
 		} else {
-			arrow = "v "
+			if ascii {
+				arrow = expandedArrowASCII
+			} else {
+				arrow = expandedArrowUnicode
+			}
 		}
 	} else {
 		arrow = "  "
