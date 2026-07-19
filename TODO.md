@@ -521,7 +521,9 @@ Merge logic (mirrors Python `Model3.__merge_individual_item`):
 
 ## Priority 8 — External tool integration
 
-Ported from Python.
+Ported from Python. Diff color themes (vimdiff done, ediff open) added
+2026-07-19 — not ported from Python, a new idea from comparing against
+Araxis Merge.
 
 - **Emacs/ediff support** — `FileMergeEmacs.py` exists but is unported.
   2-way: `emacs --eval "(ediff-files \"left\" \"right\")"`.
@@ -534,25 +536,39 @@ Ported from Python.
   diff-capable without umerge needing bespoke support for each one. Small
   change — the launch mechanism already exists for two tools, this is
   mostly a config-shape change in `mergetool.Command`.
-- **Diff color themes (Araxis-style)** — vimdiff's and ediff's default
-  colors (vim: `DiffAdd`/`DiffChange`/`DiffDelete`/`DiffText`; ediff:
-  `ediff-current-diff-A/B/C`, `ediff-fine-diff-A/B/C`, and the 3-way `-C`
-  variants) are jarringly saturated out of the box, which makes the jump
-  from umerge's own muted directory-diff colors to the launched file-diff
-  tool feel like a different app. Goal: a built-in palette closer to
-  Araxis Merge's default — muted/pastel rather than saturated. **The exact
-  palette (e.g. "pale green for insertions, pale red/pink for deletions,
-  pale yellow/gold for changed lines, distinct muted shade for word-level
-  differences") is from memory, unverified — the user will supply actual
-  RGB values from Araxis Merge when this is implemented; use those rather
-  than this description.** Apply it
-  by injecting extra `-c "highlight ..."` args
-  (vim) / extra `--eval` forms (emacs) at launch time in `vimCommand`/
-  `emacsCommand` — not by editing the user's `.vimrc`/`.emacs` — so it
-  only affects umerge-launched sessions. Ships as the built-in default for
-  `[theme.vimdiff]`/`[theme.ediff]` in the Priority 9 config file, so a
-  user who wants a different theme overrides it there rather than editing
-  Go code.
+- **Diff color themes — vimdiff done ✅ (2026-07-19), ediff still open.**
+  vimdiff's default `DiffAdd`/`DiffChange`/`DiffDelete`/`DiffText` colors
+  are unrelated to umerge's own tree palette, which made the jump from
+  browsing the tree into a file feel like switching apps. Resolved the
+  design question this entry used to leave open ("from memory, unverified
+  — the user will supply actual RGB values from Araxis Merge"): rather
+  than inventing a *separate* Araxis-flavored palette, `vimCommand`
+  (`internal/mergetool/mergetool.go`) now reuses umerge's own directory
+  colors directly — `DiffChange`/`DiffText` get `styleChanged`'s blue
+  (`#a6caf0`), `DiffAdd` gets `styleUnique`'s green (`#c0dcc0`), matching
+  what those hues already mean in the tree (changed vs. present-on-some-
+  sides). `DiffDelete` (the filler for lines only the *other* buffer has)
+  gets a plain neutral gray rather than a third color, since umerge itself
+  never highlights an absent side — it's just left blank. This is the same
+  principle Araxis Merge uses (one consistent palette across its directory
+  and file views), just sourced from umerge's own colors instead of a
+  separate imported palette. Applied via extra `-c "highlight ..."` args
+  at launch time in `vimCommand`, not by editing the user's `.vimrc` — only
+  affects umerge-launched sessions. `ctermbg` values are the closest
+  xterm-256 approximations for terminals without true-color; `guibg`/
+  `guifg` carry the exact hex. Verified by running the constructed
+  `-c` flags against the real `vim` binary headlessly and reading back
+  `:highlight` output to confirm each group landed exactly as intended, on
+  top of unit tests in `mergetool_test.go` pinning the exact command-line
+  built for one/two/three files.
+
+  **Still open:** the same treatment for ediff
+  (`ediff-current-diff-A/B/C`, `ediff-fine-diff-A/B/C`, the 3-way `-C`
+  variants) — not done this pass, only vim was asked for. **Generalize
+  beyond hardcoded vim/emacs** (below) and the config-file override in
+  Priority 9 (`[theme.vimdiff]`/`[theme.ediff]`) are also both still open;
+  the colors are hardcoded constants in `mergetool.go` for now, not yet
+  user-overridable.
 
 ---
 
@@ -615,10 +631,10 @@ tool = "vim"             # vim | emacs | a custom command template
 # colors, separator coloring — see Priority 10 for the specific cases.
 
 [theme.vimdiff]
-# overrides for the built-in Araxis-style vimdiff palette (Priority 8).
+# overrides for the built-in vimdiff palette (matches umerge's own tree colors — Priority 8).
 
 [theme.ediff]
-# overrides for the built-in Araxis-style ediff palette (Priority 8).
+# overrides for the built-in ediff palette, once implemented (Priority 8).
 ```
 
 - Optional system-wide defaults at `/etc/umerge.toml`; `~/.umergerc.toml`

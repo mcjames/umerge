@@ -247,6 +247,23 @@ The command invoked depends on how many sides have the file:
 .Sy ediff3 )
 .El
 .Pp
+When the tool is
+.Xr vimdiff 1 ,
+its diff highlight groups
+.Pq Ic DiffChange , Ic DiffText , Ic DiffAdd , Ic DiffDelete
+are recolored to match
+.Nm Ns 's
+own tree palette
+.Pq changed entries blue, present-on-one-side entries green ,
+the same way Araxis Merge uses one consistent color scheme across its
+directory and file comparison views, instead of
+.Xr vim 1 Ns 's
+unrelated defaults.
+This only affects the launched session, not the user's
+.Pa .vimrc .
+.Xr emacs 1 Ns / Ns Sy ediff
+does not have this treatment yet.
+.Pp
 The entry is automatically re-compared when the tool exits, in case it
 was edited.
 .It Ic a

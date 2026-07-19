@@ -44,6 +44,10 @@ own directory-diff mechanism.
   when you return, in case you edited it. Re-compare any entry manually
   with `r` (also re-enumerates directories, picking up files changed
   outside umerge)
+- `vimdiff` opens with its diff colors matching the tree's own palette
+  (changed → blue, present-on-one-side → green), the same way Araxis
+  Merge uses one consistent scheme across its directory and file views,
+  instead of vim's unrelated defaults (`ediff` doesn't have this yet)
 - Collapsible directories, diff-hunk counts per file, Unicode tree symbols
   (▶/▼) by default, with an ASCII fallback (`-A`/`--ascii`) for terminals
   that render the Unicode ones at the wrong width
@@ -150,9 +154,10 @@ Development is tracked in [`TODO.md`](TODO.md); in planned order:
 - Hidden-items toggle
 - The full three-way merge workflow (`diff3`-based auto-merge, resolution
   tracking)
-- A `~/.umergerc.toml` config file with theming (including an
-  Araxis-Merge-flavored color scheme for the launched `vimdiff`/`ediff`
-  session, so the jump from umerge's own colors isn't jarring)
+- The same tree-matching color treatment for `ediff` (vim's got it; emacs
+  doesn't yet)
+- A `~/.umergerc.toml` config file with theming, including making the
+  `vimdiff`/`ediff` color match user-overridable instead of hardcoded
 - The remaining nuanced 3-way partial-presence colors
 - A non-interactive/scriptable output mode
 - General robustness work (cancelling background comparison on quit, lazy
