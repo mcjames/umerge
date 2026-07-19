@@ -39,6 +39,9 @@ var (
 	styleDirArrow = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("226")) // yellow
 
+	// styleCursor: the cursor row when its entry has no diff status to
+	// highlight (unchanged/uncompared) — nothing to saturate, so this
+	// stays a neutral gray+yellow.
 	styleCursor = lipgloss.NewStyle().
 			Background(lipgloss.Color("240")).
 			Foreground(lipgloss.Color("226"))
@@ -57,6 +60,23 @@ var (
 	styleError = lipgloss.NewStyle().
 			Background(lipgloss.Color("#e06c75")).
 			Foreground(lipgloss.Color("0"))
+
+	// The cursor-row counterparts of styleUnique/styleChanged/styleError:
+	// same hue, pushed to a saturated/dark background instead of the pale
+	// pastel used elsewhere, with the cursor's yellow text kept on top —
+	// so the cursor row stays readable *and* still shows which columns
+	// actually differ, instead of the whole row going flat gray.
+	styleCursorUnique = lipgloss.NewStyle().
+				Background(lipgloss.Color("#1b8a3c")).
+				Foreground(lipgloss.Color("226"))
+
+	styleCursorChanged = lipgloss.NewStyle().
+				Background(lipgloss.Color("#2a5db0")).
+				Foreground(lipgloss.Color("226"))
+
+	styleCursorError = lipgloss.NewStyle().
+				Background(lipgloss.Color("#b3282f")).
+				Foreground(lipgloss.Color("226"))
 )
 
 // toolDoneMsg is sent when the external diff/merge tool exits. e is the
@@ -425,11 +445,9 @@ func (m Model) rowCols(idx int, isCursor bool) ([]string, []lipgloss.Style) {
 		texts[i] = entryText(e, p, counts[i], m.ascii)
 	}
 
+	normal, unique, err := styleNormal, styleUnique, styleError
 	if isCursor {
-		for i := range styles {
-			styles[i] = styleCursor
-		}
-		return texts, styles
+		normal, unique, err = styleCursor, styleCursorUnique, styleCursorError
 	}
 
 	// Determine whether every side is present.
@@ -449,20 +467,20 @@ func (m Model) rowCols(idx int, isCursor bool) ([]string, []lipgloss.Style) {
 			// otherwise a failed copy that never set its destination
 			// pointer would just look like a normal absent side.
 			if p != nil {
-				styles[i] = styleError
+				styles[i] = err
 			} else {
-				styles[i] = styleNormal
+				styles[i] = normal
 			}
 		case allPresent && (e.Compare == entry.Different || e.Compare == entry.BinaryDifferent):
-			styles[i] = m.diffStyleForCol(e, i)
+			styles[i] = m.diffStyleForCol(e, i, isCursor)
 		case allPresent:
 			// Same or still Uncompared — normal white.
-			styles[i] = styleNormal
+			styles[i] = normal
 		case p != nil:
 			// Present on this side but absent on at least one other.
-			styles[i] = styleUnique
+			styles[i] = unique
 		default:
-			styles[i] = styleNormal
+			styles[i] = normal
 		}
 	}
 
@@ -483,26 +501,30 @@ func (m Model) rowCols(idx int, isCursor bool) ([]string, []lipgloss.Style) {
 // uniformly across all columns rather than falling through the per-pair
 // logic below, which would otherwise see zero counts and wrongly render
 // them as unchanged.
-func (m Model) diffStyleForCol(e *entry.Entry, col int) lipgloss.Style {
+func (m Model) diffStyleForCol(e *entry.Entry, col int, isCursor bool) lipgloss.Style {
+	changed, normal := styleChanged, styleNormal
+	if isCursor {
+		changed, normal = styleCursorChanged, styleCursor
+	}
 	if m.ways == 2 || e.Compare == entry.BinaryDifferent {
-		return styleChanged
+		return changed
 	}
 	// 3-way: color only the columns adjacent to the differing pair.
 	switch col {
 	case 0: // left: blue if left↔middle differ
 		if e.LMDiffs > 0 {
-			return styleChanged
+			return changed
 		}
 	case 1: // middle: blue if either pair differs
 		if e.LMDiffs > 0 || e.MRDiffs > 0 {
-			return styleChanged
+			return changed
 		}
 	case 2: // right: blue if middle↔right differ
 		if e.MRDiffs > 0 {
-			return styleChanged
+			return changed
 		}
 	}
-	return styleNormal
+	return normal
 }
 
 // separatorStyle picks the style for the "|" between two adjacent

@@ -284,6 +284,131 @@ func TestRowCols_CompareErrorRendersDistinctlyFromNormal(t *testing.T) {
 	}
 }
 
+// The following cover the cursor-row recoloring added 2026-07-19: instead
+// of flattening the whole row to a neutral gray the moment the cursor
+// lands on it (losing the changed/unique/error signal until you move
+// away), the cursor row keeps each column's hue but pushed to a
+// saturated/dark background, with the cursor's yellow text kept on top.
+
+func TestRowCols_CursorPreservesUniqueHue(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	leftPath := writeFile(t, leftRoot, "only-left.txt", "content\n")
+	e := &entry.Entry{Name: "only-left.txt", Left: &leftPath}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	_, styles := m.rowCols(0, true /* cursor row */)
+
+	// Only the left column is present, so only it gets the "unique" hue —
+	// the absent right column stays blank/neutral either way, matching the
+	// non-cursor behavior (present columns highlighted, absent ones not).
+	if got, want := styles[0].GetBackground(), styleCursorUnique.GetBackground(); got != want {
+		t.Errorf("left column background = %v, want styleCursorUnique's %v", got, want)
+	}
+	if got, want := styles[0].GetForeground(), lipgloss.Color("226"); got != want {
+		t.Errorf("left column foreground = %v, want yellow (226)", got)
+	}
+	if got, want := styles[1].GetBackground(), styleCursor.GetBackground(); got != want {
+		t.Errorf("right (absent) column background = %v, want the neutral styleCursor's %v", got, want)
+	}
+}
+
+func TestRowCols_CursorPreservesChangedHue(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	leftPath := writeFile(t, leftRoot, "file.txt", "one\n")
+	rightPath := writeFile(t, rightRoot, "file.txt", "two\n")
+	e := &entry.Entry{Name: "file.txt", Left: &leftPath, Right: &rightPath, Compare: entry.Different, NumDiffs: 1}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	_, styles := m.rowCols(0, true)
+
+	wantBG := styleCursorChanged.GetBackground()
+	for i, s := range styles {
+		if s.GetBackground() != wantBG {
+			t.Errorf("column %d background = %v, want styleCursorChanged's %v", i, s.GetBackground(), wantBG)
+		}
+	}
+}
+
+func TestRowCols_CursorPreservesErrorHue(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	leftPath := writeFile(t, leftRoot, "file.txt", "content\n")
+	rightPath := writeFile(t, rightRoot, "file.txt", "content\n")
+	e := &entry.Entry{Name: "file.txt", Left: &leftPath, Right: &rightPath, Compare: entry.CompareError}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	_, styles := m.rowCols(0, true)
+
+	wantBG := styleCursorError.GetBackground()
+	for i, s := range styles {
+		if s.GetBackground() != wantBG {
+			t.Errorf("column %d background = %v, want styleCursorError's %v", i, s.GetBackground(), wantBG)
+		}
+	}
+}
+
+func TestRowCols_CursorOnNormalRowStaysNeutralGray(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	leftPath := writeFile(t, leftRoot, "file.txt", "same\n")
+	rightPath := writeFile(t, rightRoot, "file.txt", "same\n")
+	e := &entry.Entry{Name: "file.txt", Left: &leftPath, Right: &rightPath, Compare: entry.Same}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	_, styles := m.rowCols(0, true)
+
+	wantBG := styleCursor.GetBackground()
+	for i, s := range styles {
+		if s.GetBackground() != wantBG {
+			t.Errorf("column %d background = %v, want the neutral styleCursor's %v (nothing to saturate on an unchanged row)", i, s.GetBackground(), wantBG)
+		}
+	}
+}
+
+// TestRowCols_CursorThreeWayOnlyHighlightsDifferingColumns is the other half
+// of the fix: previously, landing the cursor on any row flattened *all*
+// columns to the same gray, even in 3-way mode where only some columns are
+// actually part of a differing pair. Now the cursor row should still only
+// recolor the columns adjacent to the differing pair, same as a non-cursor
+// row would, just with the saturated cursor variant instead of the pale one.
+func TestRowCols_CursorThreeWayOnlyHighlightsDifferingColumns(t *testing.T) {
+	leftRoot, middleRoot, rightRoot := t.TempDir(), t.TempDir(), t.TempDir()
+	leftPath := writeFile(t, leftRoot, "file.txt", "AAA\n")
+	middlePath := writeFile(t, middleRoot, "file.txt", "BBB\n")
+	rightPath := writeFile(t, rightRoot, "file.txt", "BBB\n")
+	// Only left↔middle differ; middle↔right are identical.
+	e := &entry.Entry{Name: "file.txt", Left: &leftPath, Middle: &middlePath, Right: &rightPath,
+		Compare: entry.Different, LMDiffs: 1, MRDiffs: 0}
+
+	m := newTestModel(3, leftRoot, middleRoot, rightRoot, []*entry.Entry{e})
+	_, styles := m.rowCols(0, true)
+
+	changedBG := styleCursorChanged.GetBackground()
+	neutralBG := styleCursor.GetBackground()
+	if styles[0].GetBackground() != changedBG {
+		t.Errorf("left column background = %v, want styleCursorChanged's %v", styles[0].GetBackground(), changedBG)
+	}
+	if styles[1].GetBackground() != changedBG {
+		t.Errorf("middle column background = %v, want styleCursorChanged's %v", styles[1].GetBackground(), changedBG)
+	}
+	if styles[2].GetBackground() != neutralBG {
+		t.Errorf("right column background = %v, want the neutral styleCursor's %v (middle↔right don't differ)", styles[2].GetBackground(), neutralBG)
+	}
+}
+
+func TestCursorStyles_AllUseYellowForeground(t *testing.T) {
+	yellow := lipgloss.Color("226")
+	cases := map[string]lipgloss.Style{
+		"styleCursor":        styleCursor,
+		"styleCursorUnique":  styleCursorUnique,
+		"styleCursorChanged": styleCursorChanged,
+		"styleCursorError":   styleCursorError,
+	}
+	for name, s := range cases {
+		if s.GetForeground() != yellow {
+			t.Errorf("%s foreground = %v, want yellow (226)", name, s.GetForeground())
+		}
+	}
+}
+
 func TestSeparatorStyle_MatchingColumnsUseTheirColor(t *testing.T) {
 	// styleDirArrow deliberately excluded: it carries no background at
 	// all (it's an accent color for the arrow glyph only, never a
