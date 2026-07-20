@@ -16,7 +16,7 @@ to look at it, then copy or delete files without leaving the terminal.
 
 ![Two-way directory comparison](docs/screenshot-two-way.png)
 
-**Three-way comparison** (left / parent / right, e.g. for reviewing a merge):
+**Three-way comparison** (left / parent / right, e.g. for merging by hand two directories that were modified from a shared parent):
 
 ![Three-way directory comparison](docs/screenshot-three-way.png)
 
