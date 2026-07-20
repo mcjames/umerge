@@ -23,12 +23,20 @@ interactively tested — low value to automate — until a state machine (e.g.
 a multi-step modal prompt) grows enough branching to be worth unit-testing
 `Update()` directly with synthetic `KeyMsg`s.
 
+**Reordered 2026-07-19** after re-scanning the Python source for
+feature-parity gaps: Selection, Hidden items, and the 3-way merge workflow
+were the only remaining Python-original features with zero implementation
+(no key handling *and* no supporting fields on `entry.Entry`), so they're
+promoted to Priority 2–4, ahead of the filtering/external-integration work
+that was previously next in line. A few items below were also found to be
+stale (already implemented, still listed as open) and corrected in place.
+
 ---
 
 ## Priority 0 — Testing catchup — ✅ DONE (2026-07-18)
 
 One-time backfill for code that predates the testing policy above. Ordered
-by leverage: the tree-diff core first, since Priority 2 is about to modify
+by leverage: the tree-diff core first, since Priority 5 is about to modify
 it directly and a regression there breaks everything downstream.
 
 **Done:** all four files below written; `go build ./...`, `go vet ./...`,
@@ -46,7 +54,7 @@ and `go test ./...` are clean — 40 tests passing across
   Cover: identical files, single hunk, multiple hunks, and for
   `CompareThreeFiles` each of the four `====N` marker cases (left differs,
   middle differs, right differs, all differ) since this drives 3-way
-  conflict marking in Priority 7.
+  conflict marking in Priority 4.
 
 ### Should do (right after)
 - `internal/mergetool/mergetool_test.go` — `Command`, `vimCommand`,
@@ -176,7 +184,7 @@ here:
   that item (same "remove everywhere it exists" idea as 2-way, one more
   side).
 - Selection-based bulk delete (`d` acting on a selection instead of the
-  cursor item) depends on Priority 5, not built yet — for now `d` always
+  cursor item) depends on Priority 2, not built yet — for now `d` always
   acts on just the cursor item.
 
 ### Delete
@@ -185,7 +193,162 @@ here:
 
 ---
 
-## Priority 2 — Filtering & performance ("is this a real tool" bar)
+## Priority 2 — Selection
+
+Ported from Python. Promoted 2026-07-19 (re-scanned the Python source for
+feature parity gaps) — `entry.Entry` currently has no `Selected` field at
+all, so this is unstarted at the data-model level, not just the
+key-handling level.
+
+- `s` — toggle selection on current item (propagates to all children)
+- Selected items rendered in a distinct highlight color (Python: blue
+  background `SELECTED` style)
+- Bulk operations: `d` (delete) and copy commands operate on the selection
+  when one exists, rather than just the cursor item
+
+### 3-way only
+- `S` — multi-step prompt: choose column (A/B/C), then choose feature
+  (absent / unchanged / changed / inserted); selects matching items
+- `x` sub-command of `S` — clear selection
+
+**Bug found in the Python source, not to be ported as-is:**
+`Match3.selection_matches(self, column, feature)` ignores both of its
+parameters — it always just returns whether the item is "present in left,
+absent in middle," regardless of which column/feature the user actually
+chose in the `S` prompt. Looks like unfinished code, not an intentional
+design choice. Implement this properly in Go: actually honor the chosen
+column (A/B/C → left/right/middle) and feature (absent/unchanged/changed/
+inserted) rather than reproducing the stub.
+
+---
+
+## Priority 3 — Hidden items
+
+Ported from Python. Promoted 2026-07-19 (re-scanned the Python source for
+feature parity gaps) — `entry.Entry` currently has no `Hidden` field
+either, unstarted at the data-model level.
+
+- `h` — toggle the user-hidden flag on the current item (and its subtree).
+  This is a user-managed "ignore" state, unrelated to dot-files or the
+  `.gitignore` filtering in Priority 5.
+- `H` — toggle whether hidden items are rendered at all (`render_hidden` flag)
+- Hidden items shown in a dimmed color when rendered; skipped entirely when
+  `render_hidden` is false
+
+---
+
+## Priority 4 — 3-way merge workflow
+
+Ported from Python. Promoted 2026-07-19 (re-scanned the Python source for
+feature parity gaps) — `entry.Entry` currently has no resolution-status
+field, unstarted at the data-model level.
+
+### Resolution status markers
+Each entry has a one-character resolution status prefix displayed at the
+start of its row:
+
+| Char | Meaning | Color |
+|------|---------|-------|
+| ` `  | unresolved (default) | green |
+| `a`  | resolved, took left | green |
+| `b`  | resolved, took right | green |
+| `m`  | auto-merged | yellow |
+| `r`  | manually resolved | yellow |
+| `c`  | conflict | red |
+
+- `R` — mark current item's tree as "resolved" (`r`)
+
+### Auto-merge to center
+- `m` — auto-merge current item into the middle (parent) directory using
+  `diff3 -m`; marks result as merged (`m`) or conflict (`c`) if conflicts
+  exist
+- `M` — same, but for all selected items
+- `n` — auto-merge the **entire tree** to center in one keystroke
+  (`Model3.merge_all`, literally `m` applied to the root item). Missed in
+  the original version of this TODO; found during the 2026-07-19
+  feature-parity scan of `Controller.py`.
+
+Merge logic (mirrors Python `Model3.__merge_individual_item`):
+- All three present, all files, no conflicts → run `diff3 -m`, write to
+  middle, mark `m`
+- Conflict detected (`diff3 -x` produces output) → mark `c`, leave for
+  manual resolution
+- One or both children absent → copy or delete middle as appropriate
+
+### How the mechanic actually works (recap, 2026-07-19 — write this down
+because it's easy to forget between sessions)
+Middle isn't just a display column — **it's the merge target.** `m`
+doesn't create output somewhere new; a successful auto-merge overwrites
+the middle file/directory in place, using `diff3 -m left ancestor right`.
+Recursing into a directory just walks this same per-item decision down
+the tree:
+- One side added something the other doesn't have → copy it into middle,
+  mark `a`/`b` (took-left/took-right). Green.
+- Both sides deleted something that existed in middle → delete it from
+  middle too, no marker needed.
+- All three present, file, changes don't overlap → real `diff3 -m` merge,
+  write to middle, mark `m` (auto-merged). Yellow.
+- All three present and changes *do* overlap (checked via `diff3 -x`
+  first, separately from the actual merge) → **do nothing to the file.**
+  Mark `c` (conflict), leave it byte-for-byte as-is. Red.
+- Same new file/dir appeared independently on both sides, no shared
+  ancestor → also just `c` — can't tell "same idea" from "coincidence."
+
+**Important: umerge never builds its own conflict-resolution UI.** A `c`
+row has no in-app conflict-marker rendering or merge editor — the user
+hits `Enter` (already built, Priority 7/8) to open all three files in
+`vimdiff`/`ediff3`, resolves by hand, saves the middle buffer, and exits.
+The classifier above (`a`/`b`/`m`/`c`) is the only new decision logic;
+resolving a real conflict is entirely delegated to the external tool that
+already exists. This is most of why this priority is smaller than it
+first looks.
+
+### Decided: delete/modify is a conflict, not a silent auto-resolve
+(2026-07-19) Python: if middle+left both have a file but right deleted it
+(or vice versa), it just copies left over middle and marks `a` — no
+warning that one side intentionally deleted this. **Decided instead:**
+delete-vs-modify is a `c` conflict, same as a real overlapping text
+conflict — deletion and modification are both deliberate actions with
+real intent behind them, and there's no line-level merge that reconciles
+"delete this" with "here's a new version of it." Auto-picking either side
+risks silently discarding real work. This is a long-settled question
+elsewhere — git calls this exact shape a "modify/delete conflict" and
+always stops rather than auto-resolving; Mercurial/Perforce/SVN do the
+same. A deliberate divergence from Python (see `feedback_python_not_sacred`
+in memory), matching the caution already applied elsewhere in this
+project (the silent-copy-from-absent-source fix and the `cp`-parent-dir
+fix in Priority 1 were both "don't silently do the convenient thing").
+
+**Resolving it needs no new UI — it reuses what's already shipped.** The
+item has `count() == 2` (one side + ancestor present, other side absent),
+so the existing Priority 7/8 `Enter` logic already falls back to a 2-way
+diff between the surviving side and the ancestor (not the 3-way merge
+tool, since there's no third file to diff against) — which is exactly the
+right view: it shows what the surviving side changed, so the human can
+judge whether it's worth keeping over the deletion. To resolve: `a`/`b`
+(whichever side is present) revives it into middle — "keep the edit,
+undo the deletion" — or `d` deletes it everywhere — "honor the deletion."
+Both are Priority 1 keys, already shipped and tested. Then `R` marks it
+resolved (see the still-open question below). Also cheaper to detect than
+a real text conflict: pure presence-check (left/middle/right nil-ness) at
+compare time, no `diff3 -x`/`diff3 -m` subprocess needed for this case.
+
+### Still open: resolution-status marker doesn't auto-clear after a manual fix
+After hand-resolving a `c` in vimdiff and saving, Priority 7's
+auto-recompare-on-exit updates the diff counts (0 diffs everywhere, looks
+fine) but the status letter stays `c` (red) until `R` is pressed — that's
+genuine Python behavior, not a bug, but worth deciding on purpose: keep
+the explicit `R` requirement (matches Python, no magic), or auto-promote
+to resolved when a post-edit recompare shows zero diffs on all three
+pairs (friendlier, but "the tool decided it's fine" is a bigger claim
+than "diffs are now zero"). No recommendation yet — flagging for a real
+decision before implementation. Same category as the delete/modify
+question above: don't silently replicate Python's behavior without
+deciding on purpose (see `feedback_python_not_sacred` in memory).
+
+---
+
+## Priority 5 — Filtering & performance ("is this a real tool" bar)
 
 This is what separates umerge from a toy on anything but a small, clean
 tree. None of this existed in the Python version — it's the biggest gap
@@ -205,7 +368,7 @@ image/Word diff, which are out of scope).
   hidden after the fact. New `-I`/`--no-gitignore` flag disables filtering
   entirely (`ig = nil`, which `Ignore.Match` treats as "never matches").
   `Entry` gained a `RelPath` field so a later manual refresh
-  (`ops.go`'s `rebuildChildren`, from Priority 4's `r` key) can re-test
+  (`ops.go`'s `rebuildChildren`, from Priority 7's `r` key) can re-test
   patterns with the correct root-relative path instead of assuming depth 0.
 
   **Deliberately scoped down, given the time available:** only the
@@ -232,6 +395,16 @@ image/Word diff, which are out of scope).
   hidden by default and reappear with `--no-gitignore`.
 - **Include/exclude filters** — wildcard and/or regex, plus flags to ignore
   whitespace, case, and blank-line-only diffs when comparing file contents.
+  **Design decision (2026-07-19, not yet implemented):** default to
+  whatever `diff`/`diff3` themselves default to — exact, case-sensitive,
+  whitespace-significant comparison, the Unix way — and make any
+  whitespace/case-insensitive behavior an explicit opt-in flag, never the
+  default. Considered and rejected: quietly configuring the *launched merge
+  tool's* (vimdiff/ediff) own whitespace handling (e.g. `diffopt+=iwhite`)
+  — that's the editor's own settings to own, not something umerge should
+  impose on someone else's `.vimrc`/`.emacs`; this item is specifically
+  about umerge's *own* content comparison (`fileops.CompareTwoFiles`/
+  `CompareThreeFiles`), analogous to `diff`'s own `-w`/`-b`/`-i` flags.
 - **Fast short-circuit comparison + binary file detection — ✅ DONE
   (2026-07-19), built together.** `fileops.CompareTwoFiles`/
   `CompareThreeFiles` now: (1) stat + compare content in fixed-size chunks
@@ -250,7 +423,7 @@ image/Word diff, which are out of scope).
   too: that would just relocate the subprocess cost we're eliminating, for
   detection detail (specific format identification) we don't actually need
   for a binary/text yes-no decision.
-  
+
   **Uncovered a real, pre-existing correctness bug while designing this:**
   two genuinely different binary files were silently rendered as `Same`.
   `diff` prints `Binary files ... differ` for differing binary content
@@ -265,7 +438,7 @@ image/Word diff, which are out of scope).
   the whole entry is marked `BinaryDifferent` uniformly in that case,
   matching diff3's own all-or-nothing behavior rather than inventing
   finer-grained information it doesn't give us.
-  
+
   New `entry.CompareState` value `BinaryDifferent`: same "changed" blue
   color as a real text difference (including all three columns in 3-way,
   since LMDiffs/MRDiffs aren't meaningful here and `diffStyleForCol`
@@ -283,7 +456,7 @@ image/Word diff, which are out of scope).
 
 ---
 
-## Priority 3 — External integrations
+## Priority 6 — External integrations
 
 git already has a directory-diff mechanism this can plug straight into:
 `git difftool --dir-diff` materializes two temp trees and invokes one
@@ -304,19 +477,16 @@ around.)
 
 - Verify umerge launches cleanly and exits without leftover terminal state
   when invoked non-interactively by `git difftool -d`.
-- Document the `.gitconfig` snippet in the README, using `--read-only`
-  (see the symlink-hazard note below for why):
-  ```
-  [difftool "umerge"]
-      cmd = umerge --read-only "$LOCAL" "$REMOTE"
-  [diff]
-      tool = umerge
-  ```
 - The 3-way mode's real differentiated use case is comparing three
   arbitrary tree *snapshots* (three deploy configs, three `git worktree`
   checkouts of different branches) — not tied to an in-progress git merge.
   Worth calling out explicitly in docs/positioning, since it's a niche use
   case nobody else in the terminal space covers.
+
+**Stale item removed 2026-07-19:** the README already documents the
+`.gitconfig` snippet (`--read-only` `git difftool` backend, see below) —
+this used to be listed here as still-open, but it was done alongside the
+`--read-only` flag itself.
 
 ### Mercurial
 `hg extdiff` uses the same mechanism as `git difftool -d`: materialize two
@@ -351,11 +521,11 @@ live working tree). Same keystroke, very different blast radius, no visual
 distinction between the two cases.
 
 **`--read-only` flag — ✅ DONE (2026-07-19).** New `-r`/`--read-only` flag:
-`a`/`b`/`c`/`d` (and any future mutating command — Priority 7's `m`/`M`/`R`
+`a`/`b`/`c`/`d` (and any future mutating command — Priority 4's `m`/`M`/`R`
 once built) show a flash message explaining they're disabled instead of
 acting. Everything non-mutating (navigate, collapse/expand, launch
 vimdiff/emacs to *view*) still works. The recommended `git difftool`
-`.gitconfig` snippet (Priority 3, git integration section above) now uses
+`.gitconfig` snippet (Priority 6, git integration section above) now uses
 `umerge --read-only "$LOCAL" "$REMOTE"`, making the git integration safe
 by default without needing any symlink-detection logic at all. Documented
 limitation: this only guarantees umerge's own commands don't mutate
@@ -409,7 +579,7 @@ Keeping these here so they don't get re-litigated later.
 
 ---
 
-## Priority 4 — Refresh / re-compare — ✅ DONE (2026-07-19)
+## Priority 7 — Refresh / re-compare — ✅ DONE (2026-07-19)
 
 Ported from Python.
 
@@ -446,89 +616,20 @@ new `r` binding and the auto-recompare-on-tool-exit behavior.
 
 ---
 
-## Priority 5 — Selection
-
-Ported from Python.
-
-- `s` — toggle selection on current item (propagates to all children)
-- Selected items rendered in a distinct highlight color (Python: blue
-  background `SELECTED` style)
-- Bulk operations: `d` (delete) and copy commands operate on the selection
-  when one exists, rather than just the cursor item
-
-### 3-way only
-- `S` — multi-step prompt: choose column (A/B/C), then choose feature
-  (absent / unchanged / changed / inserted); selects matching items
-- `x` sub-command of `S` — clear selection
-
-**Bug found in the Python source, not to be ported as-is:**
-`Match3.selection_matches(self, column, feature)` ignores both of its
-parameters — it always just returns whether the item is "present in left,
-absent in middle," regardless of which column/feature the user actually
-chose in the `S` prompt. Looks like unfinished code, not an intentional
-design choice. Implement this properly in Go: actually honor the chosen
-column (A/B/C → left/right/middle) and feature (absent/unchanged/changed/
-inserted) rather than reproducing the stub.
-
----
-
-## Priority 6 — Hidden items
-
-Ported from Python.
-
-- `h` — toggle the user-hidden flag on the current item (and its subtree).
-  This is a user-managed "ignore" state, unrelated to dot-files or the
-  `.gitignore` filtering in Priority 2.
-- `H` — toggle whether hidden items are rendered at all (`render_hidden` flag)
-- Hidden items shown in a dimmed color when rendered; skipped entirely when
-  `render_hidden` is false
-
----
-
-## Priority 7 — 3-way merge workflow
-
-Ported from Python.
-
-### Resolution status markers
-Each entry has a one-character resolution status prefix displayed at the
-start of its row:
-
-| Char | Meaning | Color |
-|------|---------|-------|
-| ` `  | unresolved (default) | green |
-| `a`  | resolved, took left | green |
-| `b`  | resolved, took right | green |
-| `m`  | auto-merged | yellow |
-| `r`  | manually resolved | yellow |
-| `c`  | conflict | red |
-
-- `R` — mark current item's tree as "resolved" (`r`)
-
-### Auto-merge to center
-- `m` — auto-merge current item into the middle (parent) directory using
-  `diff3 -m`; marks result as merged (`m`) or conflict (`c`) if conflicts
-  exist
-- `M` — same, but for all selected items
-
-Merge logic (mirrors Python `Model3.__merge_individual_item`):
-- All three present, all files, no conflicts → run `diff3 -m`, write to
-  middle, mark `m`
-- Conflict detected (`diff3 -x` produces output) → mark `c`, leave for
-  manual resolution
-- One or both children absent → copy or delete middle as appropriate
-
----
-
 ## Priority 8 — External tool integration
 
 Ported from Python. Diff color themes (vimdiff done, ediff open) added
 2026-07-19 — not ported from Python, a new idea from comparing against
 Araxis Merge.
 
-- **Emacs/ediff support** — `FileMergeEmacs.py` exists but is unported.
-  2-way: `emacs --eval "(ediff-files \"left\" \"right\")"`.
-  3-way: `emacs --eval "(ediff3 \"left\" \"middle\" \"right\")"`.
-- **`--merge` CLI flag** — choose between `vim` (default) and `emacs`
+- **Emacs/ediff support — ✅ done.** `internal/mergetool/mergetool.go`'s
+  `emacsCommand` implements both `(ediff-files "left" "right")` (2-way)
+  and `(ediff3 "left" "middle" "right")` (3-way), matching
+  `FileMergeEmacs.py`. **Stale item corrected 2026-07-19**: this used to
+  say "unported" — it wasn't, that note was just out of date.
+- **`--merge` CLI flag — ✅ done.** `main.go` accepts `-m`/`--merge vim|emacs`
+  (default `vim`), validated against those two values. **Stale item
+  corrected 2026-07-19** — also already implemented.
 - **Generalize beyond hardcoded vim/emacs** — let `[merge]` in the
   Priority 9 TOML config accept an arbitrary external command template
   (with placeholders for the two/three paths), not just a `vim`/`emacs`
@@ -565,7 +666,7 @@ Araxis Merge.
   **Still open:** the same treatment for ediff
   (`ediff-current-diff-A/B/C`, `ediff-fine-diff-A/B/C`, the 3-way `-C`
   variants) — not done this pass, only vim was asked for. **Generalize
-  beyond hardcoded vim/emacs** (below) and the config-file override in
+  beyond hardcoded vim/emacs** (above) and the config-file override in
   Priority 9 (`[theme.vimdiff]`/`[theme.ediff]`) are also both still open;
   the colors are hardcoded constants in `mergetool.go` for now, not yet
   user-overridable.
@@ -609,6 +710,10 @@ shipped — verified with new unit tests for both symbol sets plus a live
 capture confirming clean rendering (no corruption) with real CJK directory
 names. `--help`, README, and `umerge.1` (SYNOPSIS, OPTIONS, and "Tree
 symbols") all updated to document `-A`/`-U`.
+
+**Still open:** `-c`/`--colors` (color-depth override) is not implemented
+yet — umerge currently always renders in the terminal's native color
+depth.
 
 ### Config file — `~/.umergerc.toml`
 Deliberate departure from the Python version's INI format — TOML is a
@@ -738,7 +843,7 @@ useful both interactively *and* in scripts/CI, not just as a TUI.
 - Non-interactive summary output mode (e.g. `--summary` or `--json`)
   listing changed/added/removed paths, for piping into scripts or CI —
   distinct from the interactive TUI.
-- README positioning pass once Priorities 1–3 land: lead with "terminal
+- README positioning pass once Priorities 5–6 land: lead with "terminal
   native directory diff + `git difftool -d` backend," include a comparison
   table against Meld/Beyond Compare/Araxis, asciinema/GIF demo.
 

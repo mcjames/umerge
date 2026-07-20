@@ -34,8 +34,7 @@ own directory-diff mechanism.
 - Two-way and three-way directory tree comparison, enumerated and
   compared in the background so the UI stays responsive
 - Color-coded entries: unchanged, changed, present-on-some-sides-only, and
-  error states, with matching separator coloring between columns that
-  share a color
+  error states
 - Copy files/directories between sides (`a`/`b` in two-way; a multi-step
   `a`/`b`/`c` prompt in three-way) and delete them, on whichever sides
   they exist
@@ -145,15 +144,15 @@ so the git integration is a safe viewer by default.
 
 Development is tracked in [`TODO.md`](TODO.md); in planned order:
 
+- Selection and bulk operations
+- Hidden-items toggle
+- The full three-way merge workflow (`diff3`-based auto-merge, resolution
+  tracking, plus an `n` key to merge the entire tree in one keystroke)
 - Wildcard/regex include/exclude filters, plus options to ignore
   whitespace/case/blank-line-only diffs when comparing file contents
 - Nested per-directory `.gitignore` support (currently only the top-level
   file is read)
 - Deeper git/Mercurial integration docs
-- Selection and bulk operations
-- Hidden-items toggle
-- The full three-way merge workflow (`diff3`-based auto-merge, resolution
-  tracking)
 - The same tree-matching color treatment for `ediff` (vim's got it; emacs
   doesn't yet)
 - A `~/.umergerc.toml` config file with theming, including making the
