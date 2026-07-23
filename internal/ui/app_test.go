@@ -622,7 +622,7 @@ func TestRenderCell_DirectoryArrowIsYellowButNameIsNot_ASCII(t *testing.T) {
 	withForcedColorProfile(t)
 
 	e := &entry.Entry{Name: "sub", IsDir: true, Depth: 0}
-	got := renderCell("v sub", 20, styleNormal, e, true)
+	got := renderCell("v sub", 20, styleNormal, e, true, false)
 
 	wantArrow := styleNormal.Foreground(lipgloss.Color("226")).Render("v ")
 	wantRest := styleNormal.Render("sub" + strings.Repeat(" ", 15))
@@ -642,7 +642,7 @@ func TestRenderCell_DirectoryArrowIsYellowButNameIsNot_Unicode(t *testing.T) {
 	withForcedColorProfile(t)
 
 	e := &entry.Entry{Name: "sub", IsDir: true, Depth: 0, Collapsed: false}
-	got := renderCell("▼ sub", 20, styleNormal, e, false)
+	got := renderCell("▼ sub", 20, styleNormal, e, false, false)
 
 	wantArrow := styleNormal.Foreground(lipgloss.Color("226")).Render("▼ ")
 	wantRest := styleNormal.Render("sub" + strings.Repeat(" ", 15))
@@ -660,7 +660,7 @@ func TestRenderCell_DirectoryWithIndent_Unicode(t *testing.T) {
 	withForcedColorProfile(t)
 
 	e := &entry.Entry{Name: "sub", IsDir: true, Depth: 2, Collapsed: true}
-	got := renderCell("    ▶ sub", 20, styleNormal, e, false)
+	got := renderCell("    ▶ sub", 20, styleNormal, e, false, false)
 
 	wantIndent := styleNormal.Render("    ")
 	wantArrow := styleNormal.Foreground(lipgloss.Color("226")).Render("▶ ")
@@ -696,7 +696,7 @@ func TestRenderCell_NonDirectoryUsesPlainStyle(t *testing.T) {
 	withForcedColorProfile(t)
 
 	e := &entry.Entry{Name: "file.txt", IsDir: false}
-	got := renderCell("file.txt", 20, styleNormal, e, false)
+	got := renderCell("file.txt", 20, styleNormal, e, false, false)
 	want := styleNormal.Render(fit("file.txt", 20))
 	if got != want {
 		t.Errorf("renderCell for a non-directory =\n%q\nwant\n%q", got, want)
@@ -707,11 +707,43 @@ func TestRenderCell_CompareErrorDirectorySkipsArrowOverride(t *testing.T) {
 	withForcedColorProfile(t)
 
 	e := &entry.Entry{Name: "sub", IsDir: true, Compare: entry.CompareError}
-	got := renderCell("v sub", 20, styleError, e, true)
+	got := renderCell("v sub", 20, styleError, e, true, false)
 	want := styleError.Render(fit("v sub", 20))
 	if got != want {
 		t.Errorf("renderCell for a CompareError directory =\n%q\nwant\n%q (should be one uniform error-colored block, no yellow arrow)",
 			got, want)
+	}
+}
+
+func TestRenderCell_HiddenDirectorySkipsArrowOverride_NotCursor(t *testing.T) {
+	withForcedColorProfile(t)
+
+	e := &entry.Entry{Name: "sub", IsDir: true, Hidden: true}
+	got := renderCell("v sub", 20, styleHiddenNormal, e, true, false)
+	want := styleHiddenNormal.Render(fit("v sub", 20))
+	if got != want {
+		t.Errorf("renderCell for a hidden, non-cursor directory =\n%q\nwant\n%q (one uniform muted block, no yellow arrow)",
+			got, want)
+	}
+}
+
+func TestRenderCell_HiddenDirectoryCursorRowKeepsArrowOverride(t *testing.T) {
+	// A hidden entry's cursor row must render byte-for-byte like a
+	// non-hidden entry's cursor row — the user should only be able to
+	// tell it's hidden by moving the cursor off of it. (styleCursor's own
+	// text is already yellow throughout, arrow and name alike, so this
+	// checks against the same non-hidden cursor rendering directly rather
+	// than reusing assertArrowYellowNameNot, which assumes a non-cursor
+	// row where only the arrow is yellow.)
+	withForcedColorProfile(t)
+
+	hiddenEntry := &entry.Entry{Name: "sub", IsDir: true, Hidden: true}
+	normalEntry := &entry.Entry{Name: "sub", IsDir: true}
+
+	got := renderCell("v sub", 20, styleCursor, hiddenEntry, true, true)
+	want := renderCell("v sub", 20, styleCursor, normalEntry, true, true)
+	if got != want {
+		t.Errorf("hidden entry's cursor-row rendering =\n%q\nwant identical to non-hidden's\n%q", got, want)
 	}
 }
 
@@ -1041,5 +1073,165 @@ func TestUpdate_ToolDoneMsg_NilEntryIsSafe(t *testing.T) {
 	}
 	if cmd != nil {
 		t.Errorf("expected a nil Cmd, got %v", cmd)
+	}
+}
+
+func TestUpdate_KeyH_HidesCurrentItemAndPropagatesToChildren(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	child := &entry.Entry{Name: "child.txt"}
+	dir := &entry.Entry{Name: "dir", IsDir: true, Children: []*entry.Entry{child}}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{dir})
+	if len(m.flat) != 2 {
+		t.Fatalf("setup: expected 2 entries (dir + child) before hiding, got %d", len(m.flat))
+	}
+
+	updated, _ := m.Update(keyMsg('h'))
+	m = updated.(Model)
+
+	if !dir.Hidden || !child.Hidden {
+		t.Fatalf("hiding dir should propagate to child: dir.Hidden=%v child.Hidden=%v", dir.Hidden, child.Hidden)
+	}
+	// renderHidden defaults to false, so the whole subtree drops out of
+	// m.flat immediately — it shouldn't take a separate reflatten trigger
+	// (e.g. collapse/expand) to notice.
+	if len(m.flat) != 0 {
+		t.Fatalf("m.flat = %+v, want empty (hidden subtree should disappear immediately)", m.flat)
+	}
+}
+
+// Reaching a hidden entry to un-hide it goes through H first: once `h`
+// drops the cursor's entry out of m.flat, the flat-index cursor (see
+// CLAUDE.md's scroll model) has nothing left pointing at that entry — same
+// as deleting the cursor item moves on rather than preserving "current",
+// pressing h again at that point acts on whatever's now under the cursor,
+// not the just-hidden entry. H reveals it so it can be selected and
+// un-hidden the normal way.
+func TestUpdate_KeyH_UnhideRequiresRevealingViaCapitalHFirst(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	e := &entry.Entry{Name: "file.txt"}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	updated, _ := m.Update(keyMsg('h')) // hide
+	m = updated.(Model)
+	if len(m.flat) != 0 {
+		t.Fatalf("setup: expected the entry to drop out of m.flat, got %+v", m.flat)
+	}
+
+	updated, _ = m.Update(keyMsg('H')) // reveal hidden entries
+	m = updated.(Model)
+	if len(m.flat) != 1 || m.flat[0] != e {
+		t.Fatalf("setup: expected the hidden entry back after H, got %+v", m.flat)
+	}
+
+	updated, _ = m.Update(keyMsg('h')) // now reachable — unhide it
+	m = updated.(Model)
+
+	if e.Hidden {
+		t.Error("h on the revealed entry should have unhidden it")
+	}
+}
+
+func TestUpdate_KeyCapitalH_TogglesRenderHiddenAndRevealsHiddenEntries(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	e := &entry.Entry{Name: "file.txt", Hidden: true}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	if len(m.flat) != 0 {
+		t.Fatalf("setup: hidden entry should start out of m.flat, got %+v", m.flat)
+	}
+
+	updated, _ := m.Update(keyMsg('H'))
+	m = updated.(Model)
+
+	if !m.renderHidden {
+		t.Error("renderHidden should be true after H")
+	}
+	if len(m.flat) != 1 || m.flat[0] != e {
+		t.Fatalf("m.flat = %+v, want the hidden entry now visible", m.flat)
+	}
+
+	// Toggling H back off should hide it again without needing another key.
+	updated, _ = m.Update(keyMsg('H'))
+	m = updated.(Model)
+	if m.renderHidden {
+		t.Error("renderHidden should be false again")
+	}
+	if len(m.flat) != 0 {
+		t.Errorf("m.flat = %+v, want empty again", m.flat)
+	}
+}
+
+func TestRowCols_HiddenEntryUsesDarkChangedBackgroundWithGrayText(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	leftPath := writeFile(t, leftRoot, "file.txt", "one\n")
+	rightPath := writeFile(t, rightRoot, "file.txt", "two\n")
+	e := &entry.Entry{
+		Name: "file.txt", Left: &leftPath, Right: &rightPath,
+		Compare: entry.Different, NumDiffs: 1, Hidden: true,
+	}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	m.renderHidden = true // otherwise the hidden entry wouldn't be in m.flat to render at all
+	m.reflatten()
+	_, styles := m.rowCols(0, false)
+
+	wantBG := styleHiddenChanged.GetBackground()
+	wantFG := styleHiddenChanged.GetForeground()
+	for i, s := range styles {
+		if got := s.GetBackground(); got != wantBG {
+			t.Errorf("column %d background = %v, want styleHiddenChanged's dark-blue %v", i, got, wantBG)
+		}
+		if got := s.GetForeground(); got != wantFG {
+			t.Errorf("column %d foreground = %v, want styleHiddenChanged's medium gray %v", i, got, wantFG)
+		}
+		if got := s.GetBackground(); got == styleChanged.GetBackground() {
+			t.Errorf("column %d background = %v, should be darker than the non-hidden styleChanged pastel", i, got)
+		}
+	}
+}
+
+func TestRowCols_CursorHighlightOverridesHiddenLook(t *testing.T) {
+	// Reversed 2026-07-23: a hidden entry's cursor row must look exactly
+	// like a non-hidden entry's cursor row. The user reported that when
+	// hidden overrode the cursor's yellow, the cursor became invisible on
+	// a hidden row (same dark/gray look whether or not it was the
+	// cursor) — moving the cursor off a row is how you tell it's hidden,
+	// not a color difference on the cursor row itself.
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	leftPath := writeFile(t, leftRoot, "only-left.txt", "content\n")
+	e := &entry.Entry{Name: "only-left.txt", Left: &leftPath, Hidden: true}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	m.renderHidden = true
+	m.reflatten()
+	_, styles := m.rowCols(0, true /* cursor row */)
+
+	if got, want := styles[0].GetBackground(), styleCursorUnique.GetBackground(); got != want {
+		t.Errorf("left column background = %v, want the cursor's usual styleCursorUnique %v, not the hidden look", got, want)
+	}
+	if got, want := styles[0].GetForeground(), styleCursorUnique.GetForeground(); got != want {
+		t.Errorf("left column foreground = %v, want the cursor's usual yellow %v, not medium gray", got, want)
+	}
+}
+
+func TestRowCols_HiddenNormalEntryHasNoBackgroundButGrayText(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	leftPath := writeFile(t, leftRoot, "same.txt", "content\n")
+	rightPath := writeFile(t, rightRoot, "same.txt", "content\n")
+	e := &entry.Entry{Name: "same.txt", Left: &leftPath, Right: &rightPath, Compare: entry.Same, Hidden: true}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	m.renderHidden = true
+	m.reflatten()
+	_, styles := m.rowCols(0, false)
+
+	for i, s := range styles {
+		if s.GetBackground() != (lipgloss.NoColor{}) {
+			t.Errorf("column %d background = %v, want no background set (matching styleNormal's own lack of one)", i, s.GetBackground())
+		}
+		if got, want := s.GetForeground(), styleHiddenNormal.GetForeground(); got != want {
+			t.Errorf("column %d foreground = %v, want medium gray %v", i, got, want)
+		}
 	}
 }

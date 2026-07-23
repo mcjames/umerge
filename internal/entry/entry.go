@@ -33,12 +33,20 @@ type Entry struct {
 	Depth     int
 	Collapsed bool
 	Children  []*Entry
+	Parent    *Entry // nil for a top-level entry; set by BuildTree
 
 	// Comparison results (files only; set asynchronously after build).
 	Compare  CompareState
 	NumDiffs int // 2-way: hunks between left and right
 	LMDiffs  int // 3-way: hunks between left and middle
 	MRDiffs  int // 3-way: hunks between middle and right
+
+	// Hidden is a user-managed "ignore this" flag (the `h` key), unrelated
+	// to dot-files or .gitignore filtering. Toggling it propagates to the
+	// whole subtree via SetHidden, but a descendant can later be toggled
+	// back on its own without disturbing an ancestor's flag — Hidden is a
+	// plain per-entry bool, not an aggregated/upward-propagated state.
+	Hidden bool
 }
 
 // BuildPair constructs a merged tree for a two-way comparison. ig may be nil
@@ -153,6 +161,9 @@ func BuildTree(leftRoot, middleRoot, rightRoot *string, depth int, relPath strin
 				rc = rightPath
 			}
 			e.Children, _ = BuildTree(lc, mc, rc, depth+1, entryRel, ig)
+			for _, c := range e.Children {
+				c.Parent = e
+			}
 		}
 
 		entries = append(entries, e)
@@ -161,14 +172,32 @@ func BuildTree(leftRoot, middleRoot, rightRoot *string, depth int, relPath strin
 	return entries, nil
 }
 
+// SetHidden sets Hidden on e and every descendant to value, matching the
+// Python reference's propagate-down toggle_hidden/set_hidden.
+func (e *Entry) SetHidden(value bool) {
+	e.Hidden = value
+	for _, c := range e.Children {
+		c.SetHidden(value)
+	}
+}
+
 // Flatten returns the visible entries in depth-first order, skipping
-// children of collapsed directories.
-func Flatten(entries []*Entry) []*Entry {
+// children of collapsed directories. skip, if non-nil, additionally omits
+// an entry from the output when it returns true for that entry — but does
+// not affect whether the entry's own children are visited. That line/
+// recursion split matters: a user-hidden subtree usually disappears as a
+// whole because SetHidden propagated the flag to every descendant, not
+// because hiding a directory structurally skips descending into it, so a
+// descendant individually un-hidden later still renders on its own even
+// while its ancestor stays hidden.
+func Flatten(entries []*Entry, skip func(*Entry) bool) []*Entry {
 	var out []*Entry
 	for _, e := range entries {
-		out = append(out, e)
+		if skip == nil || !skip(e) {
+			out = append(out, e)
+		}
 		if e.IsDir && !e.Collapsed {
-			out = append(out, Flatten(e.Children)...)
+			out = append(out, Flatten(e.Children, skip)...)
 		}
 	}
 	return out

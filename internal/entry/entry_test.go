@@ -227,7 +227,7 @@ func TestFlatten_FlatSiblingsOnly(t *testing.T) {
 		{Name: "a"},
 		{Name: "b"},
 	}
-	flat := Flatten(entries)
+	flat := Flatten(entries, nil)
 	if len(flat) != 2 || flat[0].Name != "a" || flat[1].Name != "b" {
 		t.Fatalf("got %+v", flat)
 	}
@@ -245,7 +245,7 @@ func TestFlatten_ExpandedDirIncludesChildren(t *testing.T) {
 		},
 		{Name: "z"},
 	}
-	flat := Flatten(entries)
+	flat := Flatten(entries, nil)
 	wantOrder := []string{"dir", "child1", "child2", "z"}
 	if len(flat) != len(wantOrder) {
 		t.Fatalf("got %d entries, want %d: %+v", len(flat), len(wantOrder), flat)
@@ -269,7 +269,7 @@ func TestFlatten_CollapsedDirSkipsChildren(t *testing.T) {
 		},
 		{Name: "z"},
 	}
-	flat := Flatten(entries)
+	flat := Flatten(entries, nil)
 	wantOrder := []string{"dir", "z"}
 	if len(flat) != len(wantOrder) {
 		t.Fatalf("got %d entries, want %d: %+v", len(flat), len(wantOrder), flat)
@@ -297,7 +297,7 @@ func TestFlatten_MixedCollapsedAndExpandedSiblings(t *testing.T) {
 			},
 		},
 	}
-	flat := Flatten(entries)
+	flat := Flatten(entries, nil)
 	wantOrder := []string{"collapsed", "expanded", "shown-child"}
 	if len(flat) != len(wantOrder) {
 		t.Fatalf("got %d entries, want %d: %+v", len(flat), len(wantOrder), flat)
@@ -306,6 +306,88 @@ func TestFlatten_MixedCollapsedAndExpandedSiblings(t *testing.T) {
 		if flat[i].Name != name {
 			t.Errorf("flat[%d].Name = %q, want %q", i, flat[i].Name, name)
 		}
+	}
+}
+
+func TestBuildPair_ParentPointerSetForNestedEntries(t *testing.T) {
+	left := t.TempDir()
+	right := t.TempDir()
+	mkfile(t, left, "sub/nested.txt")
+	mkfile(t, right, "sub/nested.txt")
+
+	entries, err := BuildPair(left, right, nil)
+	if err != nil {
+		t.Fatalf("BuildPair: %v", err)
+	}
+
+	sub := entries[0]
+	if sub.Parent != nil {
+		t.Fatalf("top-level entry's Parent = %+v, want nil", sub.Parent)
+	}
+	nested := sub.Children[0]
+	if nested.Parent != sub {
+		t.Fatalf("nested.Parent = %p, want sub (%p)", nested.Parent, sub)
+	}
+}
+
+func TestSetHidden_PropagatesToWholeSubtree(t *testing.T) {
+	child := &Entry{Name: "child"}
+	grandchild := &Entry{Name: "grandchild"}
+	child.Children = []*Entry{grandchild}
+	root := &Entry{Name: "root", IsDir: true, Children: []*Entry{child}}
+
+	root.SetHidden(true)
+
+	if !root.Hidden || !child.Hidden || !grandchild.Hidden {
+		t.Fatalf("SetHidden(true) didn't reach whole subtree: root=%v child=%v grandchild=%v",
+			root.Hidden, child.Hidden, grandchild.Hidden)
+	}
+}
+
+func TestSetHidden_DescendantCanBeUnhiddenIndependently(t *testing.T) {
+	child := &Entry{Name: "child"}
+	root := &Entry{Name: "root", IsDir: true, Children: []*Entry{child}}
+
+	root.SetHidden(true)
+	child.SetHidden(false)
+
+	if !root.Hidden {
+		t.Fatalf("root.Hidden = false, want true (unhiding a child shouldn't touch its ancestor)")
+	}
+	if child.Hidden {
+		t.Fatalf("child.Hidden = true, want false")
+	}
+}
+
+func TestFlatten_SkipOmitsEntryButStillDescendsIntoChildren(t *testing.T) {
+	// A directory whose Hidden flag wasn't propagated to one child (as if
+	// that child was independently un-hidden after the fact): the
+	// directory's own line is skipped, but its non-hidden child still
+	// renders on its own, matching the reference implementation's
+	// per-line (not per-subtree) filtering.
+	child := &Entry{Name: "child"}
+	dir := &Entry{Name: "dir", IsDir: true, Hidden: true, Children: []*Entry{child}}
+	entries := []*Entry{dir, {Name: "z"}}
+
+	skip := func(e *Entry) bool { return e.Hidden }
+	flat := Flatten(entries, skip)
+
+	wantOrder := []string{"child", "z"}
+	if len(flat) != len(wantOrder) {
+		t.Fatalf("got %d entries, want %d: %+v", len(flat), len(wantOrder), flat)
+	}
+	for i, name := range wantOrder {
+		if flat[i].Name != name {
+			t.Errorf("flat[%d].Name = %q, want %q", i, flat[i].Name, name)
+		}
+	}
+}
+
+func TestFlatten_NilSkipKeepsEveryEntry(t *testing.T) {
+	entries := []*Entry{{Name: "a", Hidden: true}, {Name: "b"}}
+	flat := Flatten(entries, nil)
+	if len(flat) != 2 {
+		t.Fatalf("got %d entries, want 2: %+v", len(flat), flat)
 	}
 }
 

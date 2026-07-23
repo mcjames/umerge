@@ -113,6 +113,13 @@ func (m *Model) rebuildChildren(e *entry.Entry) {
 		return
 	}
 	addDepth(children, e.Depth+1)
+	// BuildTree only wires Parent for descendants created within its own
+	// recursion, not for the top-level slice it returns to this caller —
+	// without this, Parent would go stale (nil) for e's children after
+	// every copy/refresh that rebuilds a subtree.
+	for _, c := range children {
+		c.Parent = e
+	}
 	e.Children = children
 }
 
@@ -205,8 +212,9 @@ func (m *Model) deleteEntry(e *entry.Entry) {
 }
 
 // removeEntry returns entries with target spliced out, searching
-// recursively into children. Entry has no parent pointer, so this walks
-// the tree rather than following a back-reference.
+// recursively into children. Could instead splice target out of
+// target.Parent.Children directly, but that's an unrelated cleanup — left
+// as a tree walk for now.
 func removeEntry(entries []*entry.Entry, target *entry.Entry) []*entry.Entry {
 	out := entries[:0:0]
 	for _, e := range entries {

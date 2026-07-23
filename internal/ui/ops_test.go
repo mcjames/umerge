@@ -16,7 +16,7 @@ func newTestModel(ways int, leftRoot, middleRoot, rightRoot string, entries []*e
 		rightRoot:  rightRoot,
 		entries:    entries,
 	}
-	m.flat = entry.Flatten(entries)
+	m.flat = entry.Flatten(entries, hiddenSkip(m.renderHidden))
 	return m
 }
 
@@ -127,6 +127,10 @@ func TestCopyEntry_Directory_RebuildsChildrenAndRecompares(t *testing.T) {
 	}
 	if rebuiltChild.Compare != entry.Same {
 		t.Errorf("rebuilt child Compare = %v, want Same", rebuiltChild.Compare)
+	}
+	if rebuiltChild.Parent != e {
+		t.Errorf("rebuilt child.Parent = %p, want e (%p) — BuildTree doesn't wire Parent "+
+			"for the top-level slice it returns, so rebuildChildren must do it itself", rebuiltChild.Parent, e)
 	}
 
 	// Regression check for the bug reported 2026-07-18: m.flat is a

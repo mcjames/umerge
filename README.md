@@ -105,6 +105,8 @@ Key bindings (see `umerge --help` or `man umerge` for the full list):
 | `c` | three-way only: start a copy-from-parent prompt |
 | `d` | delete the entry on every side it exists |
 | `r` | re-enumerate and re-compare the entry at the cursor, in the background |
+| `h` | toggle the hidden flag on the entry at the cursor (and its subtree) |
+| `H` | toggle whether hidden entries are shown at all |
 | `q`, `Ctrl-C` | quit |
 
 `a`/`b`/`c`/`d` are disabled (with a status-bar message explaining why) when run with `-r`/`--read-only`.

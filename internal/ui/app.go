@@ -77,6 +77,28 @@ var (
 	styleCursorError = lipgloss.NewStyle().
 				Background(lipgloss.Color("#b3282f")).
 				Foreground(lipgloss.Color("226"))
+
+	// Hidden-entry styles (`H` reveals user-hidden items): each category's
+	// own hue, pushed much darker, with medium-gray text for legibility on
+	// the dark background — replaces the terminal "faint" SGR attribute
+	// tried first, which read as barely-different in practice. Applied in
+	// place of the cursor variants too, not on top of them: the cursor's
+	// yellow highlight would otherwise still read as "bright" on a hidden
+	// row, undermining the whole point of dimming it.
+	styleHiddenNormal = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("245"))
+
+	styleHiddenUnique = lipgloss.NewStyle().
+				Background(lipgloss.Color("#16261c")).
+				Foreground(lipgloss.Color("245"))
+
+	styleHiddenChanged = lipgloss.NewStyle().
+				Background(lipgloss.Color("#17233d")).
+				Foreground(lipgloss.Color("245"))
+
+	styleHiddenError = lipgloss.NewStyle().
+				Background(lipgloss.Color("#35141a")).
+				Foreground(lipgloss.Color("245"))
 )
 
 // toolDoneMsg is sent when the external diff/merge tool exits. e is the
@@ -110,6 +132,17 @@ type Model struct {
 	pendingCopyFrom byte   // 0 = none; 'a'/'b'/'c' = 3-way copy awaiting a destination choice
 	prompt          string // status-bar prompt shown while pendingCopyFrom is set
 	flash           string // one-shot status message (e.g. "nothing to copy"), cleared on the next key
+
+	renderHidden bool // `H` key; false by default — user-hidden entries stay out of m.flat until toggled on
+}
+
+// hiddenSkip is the Flatten skip-predicate for user-hidden entries (the `h`
+// key): an entry is omitted from m.flat when it's hidden and hidden
+// rendering is currently off.
+func hiddenSkip(renderHidden bool) func(*entry.Entry) bool {
+	return func(e *entry.Entry) bool {
+		return e.Hidden && !renderHidden
+	}
 }
 
 // New creates the UI model. middleRoot is "" for two-way mode. ascii selects
@@ -139,7 +172,7 @@ func New(leftRoot, middleRoot, rightRoot string, entries []*entry.Entry, mergeTo
 		compareCh:  ch,
 		comparing:  true,
 	}
-	m.flat = entry.Flatten(entries)
+	m.flat = entry.Flatten(entries, hiddenSkip(m.renderHidden))
 	return m
 }
 
@@ -245,6 +278,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if len(m.flat) > 0 {
 				m.deleteEntry(m.flat[m.cursor])
 			}
+
+		case "h":
+			if len(m.flat) > 0 {
+				e := m.flat[m.cursor]
+				e.SetHidden(!e.Hidden)
+				m.reflatten()
+			}
+
+		case "H":
+			m.renderHidden = !m.renderHidden
+			m.reflatten()
 
 		case "r":
 			if m.comparing {
@@ -368,7 +412,7 @@ func (m Model) handleCopyDestination(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) reflatten() {
-	m.flat = entry.Flatten(m.entries)
+	m.flat = entry.Flatten(m.entries, hiddenSkip(m.renderHidden))
 	if m.cursor >= len(m.flat) {
 		m.cursor = len(m.flat) - 1
 	}
@@ -422,7 +466,7 @@ func (m Model) View() string {
 			if i > 0 {
 				sb.WriteString(separatorStyle(styles[i-1], styles[i]).Render("|"))
 			}
-			sb.WriteString(renderCell(texts[i], widths[i], styles[i], e, m.ascii))
+			sb.WriteString(renderCell(texts[i], widths[i], styles[i], e, m.ascii, idx == m.cursor))
 		}
 		sb.WriteByte('\n')
 	}
@@ -466,8 +510,17 @@ func (m Model) rowCols(idx int, isCursor bool) ([]string, []lipgloss.Style) {
 	}
 
 	normal, unique, err := styleNormal, styleUnique, styleError
-	if isCursor {
+	switch {
+	case isCursor:
+		// The cursor row looks the same whether or not the entry under it
+		// is hidden — the point of Hidden's own dark/gray look is to read
+		// as different *from the cursor row's other rows*; overriding the
+		// cursor itself would make the cursor unreadable exactly when
+		// resting on a hidden entry. Moving the cursor off it is how you
+		// tell it's hidden.
 		normal, unique, err = styleCursor, styleCursorUnique, styleCursorError
+	case e.Hidden:
+		normal, unique, err = styleHiddenNormal, styleHiddenUnique, styleHiddenError
 	}
 
 	// Determine whether every side is present.
@@ -523,8 +576,11 @@ func (m Model) rowCols(idx int, isCursor bool) ([]string, []lipgloss.Style) {
 // them as unchanged.
 func (m Model) diffStyleForCol(e *entry.Entry, col int, isCursor bool) lipgloss.Style {
 	changed, normal := styleChanged, styleNormal
-	if isCursor {
+	switch {
+	case isCursor: // see rowCols: the cursor row looks the same whether or not it's hidden
 		changed, normal = styleCursorChanged, styleCursor
+	case e.Hidden:
+		changed, normal = styleHiddenChanged, styleHiddenNormal
 	}
 	if m.ways == 2 || e.Compare == entry.BinaryDifferent {
 		return changed
@@ -579,9 +635,14 @@ func separatorStyle(left, right lipgloss.Style) lipgloss.Style {
 // name, keeps the column's own style. Skipped for CompareError rows: an
 // error should read as a single, unambiguous red line, not a yellow arrow
 // on a red background.
-func renderCell(text string, width int, style lipgloss.Style, e *entry.Entry, ascii bool) string {
+func renderCell(text string, width int, style lipgloss.Style, e *entry.Entry, ascii, isCursor bool) string {
 	fitted := fit(text, width)
-	if e == nil || !e.IsDir || e.Compare == entry.CompareError {
+	if e == nil || !e.IsDir || e.Compare == entry.CompareError || (e.Hidden && !isCursor) {
+		// A hidden row should read as one uniform muted line, not a yellow
+		// arrow breaking up the dimming — same reasoning as the
+		// CompareError skip just above. But not when it's also the cursor
+		// row: the cursor's look (arrow included) stays identical whether
+		// or not the entry under it is hidden, matching rowCols.
 		return style.Render(fitted)
 	}
 	// The arrow is 2 *bytes* for the ASCII symbols ("> "/"v ") but 4 for

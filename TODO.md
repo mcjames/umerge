@@ -195,45 +195,398 @@ here:
 
 ## Priority 2 — Selection
 
-Ported from Python. Promoted 2026-07-19 (re-scanned the Python source for
-feature parity gaps) — `entry.Entry` currently has no `Selected` field at
-all, so this is unstarted at the data-model level, not just the
-key-handling level.
+**Clean-room Go design — Python is inspiration only, not a spec.**
+`entry.Entry` currently has no `Selected` field at all, so this is
+unstarted at the data-model level. Promoted 2026-07-19 (re-scanned the
+Python source for feature parity gaps); redesigned from scratch
+2026-07-21 after finding real bugs in the Python reference (below);
+revised again same day after further thought about the holes design (see
+"Primary design" vs. "Fallback design" below) — the holes idea traded
+away a whole feature (bulk copy) for a UX gesture ("select all but X")
+judged less important than expected once actual usage patterns were
+considered.
 
-- `s` — toggle selection on current item (propagates to all children)
-- Selected items rendered in a distinct highlight color (Python: blue
-  background `SELECTED` style)
-- Bulk operations: `d` (delete) and copy commands operate on the selection
-  when one exists, rather than just the cursor item
+- `s` — toggle selection on current item; propagates the new value down
+  to the whole subtree (selecting or deselecting a directory applies to
+  all its current descendants). This part is common to both designs
+  below.
+- Selected items rendered in a distinct highlight color.
+- Selection is **tree-wide, not cursor-scoped**: bulk operations act on
+  every selected node anywhere in the tree, not just ones near the
+  cursor.
+- Bulk operations: `d` (delete) and bulk copy (`a`/`b`/3-way copy
+  prompts) both operate on the selection when one exists, rather than
+  just the cursor item.
+
+### Primary design: no holes — partial deselect is blocked (decided 2026-07-21)
+
+**Expected usage shape drove this decision.** Reconsidering the original
+holes design below: the realistic way this tool gets used is *iterative
+and interactive* — select a small piece of the tree, copy/delete/merge
+it, look at the result, select the next piece, repeat — not "carefully
+construct one big selection with several carved-out exceptions, then fire
+a single irreversible bulk action and hope the reasoning was right." The
+latter is exactly the shape where a mistake is most costly: delete and
+copy are not undoable, and the more intricate the mental model needed to
+predict what a bulk action will do, the higher the odds of getting it
+wrong on a real tree. Optimize for the common iterative case, not the
+rare big-batch one.
+
+**Invariant:** a directory's `Selected` flag always means "100% of this
+subtree is selected" — no exceptions, ever. Concretely: pressing `s` on a
+node that is a descendant of an already-selected ancestor is a **no-op**
+— flash "deselect the containing directory first" (reusing the existing
+flash mechanism) instead of silently doing nothing or creating an
+inconsistency. To exclude one item from a bulk selection, the user
+deselects the ancestor and selects the other children individually — more
+keystrokes for a wide directory, but zero new mental model and no risk of
+an ancestor's selected state lying about what's actually underneath it.
+
+**Why this is worth the extra keystrokes:**
+- Bulk delete is trivial and needs no safety carve-out: walk the tree,
+  `rm -Rf` any maximal selected subtree, stop and don't recurse beneath
+  it. Nothing to check for holes because holes can't exist.
+- Bulk copy is no longer punted — it's the identical maximal-subtree walk
+  with `cp -R` instead of `rm -Rf`, fully symmetric with delete. This was
+  blocked entirely under the holes design (see Fallback below); here it's
+  not extra work at all, it falls out of the same algorithm.
+- No hole-tracking bit, no incremental up-propagation needed for
+  correctness. `Parent *Entry` is still worth adding for Priority 3's
+  focus mode, but selection no longer depends on it for anything
+  safety-critical.
+- Optional, purely cosmetic: a tri-state indicator on collapsed
+  directories (empty / partial / full — the standard VS Code/Explorer
+  checkbox-tree convention) so a collapsed directory containing selected
+  descendants doesn't look indistinguishable from an empty selection.
+  Since nothing depends on this for correctness, it can be built later,
+  or skipped, without affecting delete/copy safety either way.
+
+### Fallback design: selection "holes" (parked, not primary)
+
+Kept here in case the primary design's tedium (deselect-ancestor-then-
+hand-pick-the-rest) turns out to bite in practice on wide directories, and
+"select all but X" as a single gesture turns out to matter more than the
+usage-pattern read above predicted.
+
+Selecting a directory selects its whole subtree, but the user can
+navigate into any descendant and press `s` there to deselect just that
+one subtree — without disturbing the ancestor's own selected state. That
+descendant is now a **hole**: the ancestor is still "selected" as far as
+its own flag goes, but no longer uniformly so underneath. Bulk delete
+must never delete a holed ancestor wholesale (an `rm -Rf` would destroy
+the hole's contents too, which the user deliberately carved out to keep).
+
+**Bulk delete algorithm:** walk the tree top-down. At each node: if it is
+selected *and* no descendant anywhere beneath it is unselected (the whole
+subtree is uniformly selected — no holes), delete it wholesale using the
+existing Priority 1 per-item delete-and-splice, and stop — nothing left
+to check underneath. Otherwise (node unselected, or selected-but-holed),
+leave it alone and recurse into its children, applying the same test at
+each level. The nodes actually deleted are the maximal fully-selected
+subtrees; holes and anything outside the selection survive untouched.
+
+**Rendering needs shared infrastructure with focus mode.** To show which
+selected directories contain holes without expanding them (distinct
+highlight color for "fully selected" vs. "selected with holes," not just
+a single SELECTED color), a directory needs a persistent "has an
+unselected descendant" bit, maintained incrementally (walking up from
+whichever node was just toggled, via the same `Parent *Entry` pointer
+Priority 3 already needs) rather than recomputed by a full subtree walk
+every render frame.
+
+**Bulk copy is materially harder here and would stay out of scope even if
+this design were revived** ("this is a hobby project, not a CS thesis").
+Delete's skip-and-recurse works because deleting the pieces independently
+is correct. Copy isn't symmetric: preserving a hole on copy means the
+destination directory has to be created and then *selectively* populated
+with only the selected children — a filtered recursive merge,
+structurally closer to Priority 4's 3-way merge walk than to Priority 1's
+`cp -R`. A selection containing any hole would need to flash "Bulk copy
+with a partial selection isn't supported yet" and do nothing, rather than
+either building the filtered-merge logic or silently doing an unfiltered
+`cp -R` that would wrongly bring the holes' contents along. (This is the
+concrete cost that primarily disqualified this design as the default —
+see "Primary design" above.)
 
 ### 3-way only
 - `S` — multi-step prompt: choose column (A/B/C), then choose feature
-  (absent / unchanged / changed / inserted); selects matching items
-- `x` sub-command of `S` — clear selection
+  (absent / unchanged / changed / inserted); selects matching items.
+- **Additive, not destructive** (decided 2026-07-21, diverges from
+  Python): `S` sets `Selected = true` on every node matching the chosen
+  column/feature and leaves every other node's selection state exactly as
+  it was. It must never clear or overwrite an existing manual `s`
+  selection — the whole point of manual picks plus pattern-matched
+  bulk-adds is that they compose. Under the primary (no-holes) design,
+  this composes the same way but is still subject to the no-partial-
+  deselect rule elsewhere — `S` only ever sets flags to `true`, so it
+  can't create a hole either way.
+- `x` — clear the entire selection (this one *is* a full reset, not
+  additive — that's its whole job).
 
-**Bug found in the Python source, not to be ported as-is:**
-`Match3.selection_matches(self, column, feature)` ignores both of its
-parameters — it always just returns whether the item is "present in left,
-absent in middle," regardless of which column/feature the user actually
-chose in the `S` prompt. Looks like unfinished code, not an intentional
-design choice. Implement this properly in Go: actually honor the chosen
-column (A/B/C → left/right/middle) and feature (absent/unchanged/changed/
-inserted) rather than reproducing the stub.
+### Bugs found in the Python source — confirms clean-room, not a port
+Python's implementation should not be consulted as a reference for this
+priority beyond the high-level UX shape (select/deselect, highlight, bulk
+`d`, the `S` pattern-select idea). Specific bugs found, not to be
+inherited:
+- `Match3.selection_matches` ignores both of its parameters — always
+  returns "present in left, absent in middle" regardless of the column/
+  feature the user actually chose in the `S` prompt. Looks like
+  unfinished code.
+- `Model3.__delete_selected_aux` (`Model3.py:461-469`) recurses the tree
+  and only assigns its `return_value` local inside the `if item.selected`
+  branch, but unconditionally does `return return_value` at the end —
+  an `UnboundLocalError` crash on essentially every real bulk-delete call,
+  since the function is first invoked on the tree root, which is
+  essentially never itself selected. It also separately re-deletes
+  already-covered selected children after deleting their selected parent
+  (harmless in practice only because `rm -f` is idempotent on missing
+  paths, but sloppy). Neither behavior — nor the "holes get destroyed"
+  semantics that would follow from a literal port — is worth carrying
+  forward; both designs above replace this entirely.
 
 ---
 
-## Priority 3 — Hidden items
+## Priority 3 — Hidden items — ✅ DONE (2026-07-22)
 
 Ported from Python. Promoted 2026-07-19 (re-scanned the Python source for
-feature parity gaps) — `entry.Entry` currently has no `Hidden` field
-either, unstarted at the data-model level.
+feature parity gaps) — `entry.Entry` had no `Hidden` field, unstarted at
+the data-model level.
 
-- `h` — toggle the user-hidden flag on the current item (and its subtree).
-  This is a user-managed "ignore" state, unrelated to dot-files or the
-  `.gitignore` filtering in Priority 5.
-- `H` — toggle whether hidden items are rendered at all (`render_hidden` flag)
-- Hidden items shown in a dimmed color when rendered; skipped entirely when
-  `render_hidden` is false
+Split into two separate items 2026-07-22, at the point of implementation:
+this priority is the core ported feature only; the "focus on diffs"
+extension designed alongside it (2026-07-21) is its own item below,
+**Priority 3b**, not yet built — it was never required to close this one
+out, just designed in the same sitting because the two share rendering
+machinery.
+
+**Done:** `Entry.Hidden` (`internal/entry/entry.go`), `Entry.SetHidden`
+(propagates down through `Children`, mirroring Python's
+`toggle_hidden`/`set_hidden` — a descendant can later be un-hidden on its
+own without disturbing an already-hidden ancestor's flag, since `Hidden`
+is a plain per-entry bool, not aggregated). `h` toggles the cursor item's
+subtree; `H` toggles `Model.renderHidden` (default `false`, matching
+Python's `self.render_hidden = False`).
+
+**`Flatten` gained a `skip func(*Entry) bool` parameter** (was
+`Flatten(entries)`, now `Flatten(entries, skip)`) — the "exact same
+skip-predicate mechanism" Priority 3b's design already assumed it would
+reuse. Checked against the actual Python traversal
+(`View3.py:__next_display_line_aux`/`__should_render_item`) before
+implementing: hiding a node only omits that one display line, it does
+**not** structurally stop recursion into its children — a directory's
+subtree normally disappears as a whole only because `SetHidden` already
+propagated the flag to every descendant, not because the traversal
+special-cases a hidden ancestor. `Flatten` mirrors this: `skip` gates
+whether an entry is appended to the output, recursion into `Children` is
+governed only by `Collapsed`, same as before. This split matters for
+Priority 3b too — its "clean subtree collapses to one dimmed line"
+behavior is a *recursion*-level rule, not a line-level `skip` — so
+`Flatten` deliberately keeps those as two different levers rather than
+conflating them into one combined boolean, which is what let this land
+without needing to redesign `Flatten` again once 3b is built.
+
+**Rendering — category-preserving dim, decided over a flat override; two
+attempts.** Checked Python's actual runtime color selection
+(`View3.py:__compute_colors`) before choosing: its `hidden` check
+short-circuits before the category checks, so in practice every hidden
+entry there renders in one flat color regardless of category — even
+though the file *also* defines a full set of per-category hidden pairs
+(`normal_hidden`/`changed_hidden`/`inserted_hidden`/`removed_hidden` in
+`View3.py`) that the color-selection logic never actually reaches. Decided
+against replicating the flat-override behavior: a hidden-but-changed entry
+is still worth knowing it changed.
+
+First attempt (2026-07-22): `styles[i].Faint(true)` layered on top of
+whatever category style was already picked — no new palette needed, but
+reported back as hard to see in practice (the ANSI faint attribute is a
+subtle effect, and some terminals barely render it differently at all).
+Replaced same-day with explicit darker-but-same-hue background variants
+plus solid medium-gray (256-color `245`) text: `styleHiddenNormal`
+(no background, matching plain `styleNormal`'s own lack of one),
+`styleHiddenUnique` (`#16261c`, a dark green), `styleHiddenChanged`
+(`#17233d`, a dark navy), `styleHiddenError` (`#35141a`, a dark maroon) —
+each a much-darkened version of its pastel counterpart
+(`styleUnique`/`styleChanged`/`styleError`), not a single shared hidden
+color.
+
+**Priority order between Hidden and the cursor — reversed once, based on
+feedback.** First implementation had `e.Hidden` checked before `isCursor`
+in both `rowCols` and `diffStyleForCol`, on the reasoning that a hidden
+entry should keep reading as hidden even under the cursor. User reported
+back that this made the cursor itself hard to spot on a hidden row (no
+visual difference between "cursor here" and "not cursor" once hidden).
+Reversed same-day: `isCursor` now wins over `e.Hidden` in both functions
+— **the cursor row looks identical whether or not the entry under it is
+hidden**, matching a plain cursor row exactly; moving the cursor *off*
+an entry is how you tell it's hidden, not a color change on the cursor
+row itself. `renderCell`'s yellow directory-arrow accent follows the same
+rule — gained an `isCursor` parameter so the arrow is only suppressed for
+a hidden row when it's *not* the cursor row (a hidden cursor row keeps
+its normal yellow arrow, same as any other cursor row on a directory).
+Confirmed live via pty: the exact same SGR bytes
+(`38;5;226;48;2;42;93;176`, i.e. `styleCursorChanged`) render whether the
+cursor lands on `c.txt` before it's ever hidden, or after being hidden
+and revealed via `H` — a non-cursor hidden row still shows the distinct
+dark-navy/gray look in between.
+
+**`Parent *Entry` added to `Entry` now, as prep for Priority 3b** — not
+needed by Hidden items itself (propagation is downward through
+`Children`), but explicitly the "structural prerequisite" 3b's own design
+already called for, added here so that work doesn't have to touch
+`BuildTree` again later. Wired in `BuildTree` (`entry.go`) for entries
+created within its own recursion; `ops.go`'s `rebuildChildren` needed a
+matching one-line fix — it calls `BuildTree` directly for a subtree
+rebuild after a copy/refresh and reassigns the result to `e.Children`,
+but `BuildTree` only wires `Parent` for descendants created *within* its
+own recursion, not for the top-level slice it hands back to a caller, so
+without this fix `Parent` would have gone stale (nil) after every
+directory copy or `r` refresh.
+
+**Interaction with the existing flat-index cursor model, found while
+testing, not a bug:** hiding the entry the cursor is on removes it from
+`m.flat` immediately (same as delete), so — per `CLAUDE.md`'s scroll
+model, `cursor` is a flat-list index, not a reference to the entry itself
+— there's nothing left for a second `h` press to reach and undo. Unlike
+delete this is meant to be reversible, so this is worth knowing: reversing
+requires `H` (reveal hidden entries) first, then `h` again on the now-
+visible entry, not pressing `h` twice in place. Verified both the direct
+propagate-down case and this reveal-then-unhide path with unit tests.
+
+Verified with unit tests (`entry_test.go`: `Parent` wiring, `SetHidden`
+propagation, an independently-un-hidden descendant, `Flatten`'s skip
+predicate omitting a line without blocking recursion into its children;
+`app_test.go`/`ops_test.go`: `h`/`H` key handling, the reveal-then-unhide
+path above, the rebuilt-children `Parent` fix, and the dark-background/
+gray-text rendering including the cursor-override case) plus live-pty
+smoke tests against the real compiled binary confirming the full round
+trip: `a.txt` drops out of view on `h`, reappears on `H` with the
+captured raw SGR bytes showing medium-gray text (`38;5;245`) and, for a
+changed entry, the dark navy background (`48;2;23;35;60`) rather than the
+normal pastel blue — including with the cursor moved directly onto the
+revealed row, confirming it stays dark/gray rather than reverting to the
+cursor's yellow. `--help`, README, and `umerge.1` updated for `h`/`H` and
+the dark-shade-plus-gray-text color note.
+
+---
+
+## Priority 3b — "Focus on diffs" mode (extension, not yet implemented)
+
+New idea, not from the Python version — an enhancement discovered while
+thinking about `git difftool -d` on a genuinely huge tree (Linux kernel,
+Firefox), where only a handful of files/directories actually differ and
+wading through the whole tree to find them defeats the point of the tool.
+Designed alongside Priority 3 (Hidden items) because the two share most
+of their rendering machinery (see "shared mechanism" below), even though
+conceptually they're different: `Hidden` is a user-set fact; "has a diff"
+is a computed aggregate. Split into its own numbered item 2026-07-22 —
+see Priority 3's note — since it's materially more work than Hidden items
+itself and was never a prerequisite for it.
+
+**Data model.** Two independent booleans per conceptual axis — do not
+conflate:
+- `Hidden` (Priority 3) — user-managed, explicit, static once toggled.
+- Subtree diff state — *derived*, bottom-up from the leaves, and
+  **not fully known until comparison finishes**. Presence mismatches
+  (file/dir absent on one side) are known instantly at tree-build time
+  (`BuildTree` is eager/synchronous, per `CLAUDE.md`). Content mismatches
+  only become known as `compareResultMsg`s trickle in from the background
+  `walkAndCompare` goroutine (`internal/ui/compare.go:40-49`), one file at
+  a time — on a kernel-sized tree that walk takes real time. So this is
+  **not a plain bool**: model it as tri-state per subtree — diff-found /
+  confirmed-clean / still-pending. A directory can't honestly claim
+  "clean" until every comparable descendant has reported in.
+
+**Structural prerequisite — ✅ already in place (done alongside Priority
+3, 2026-07-22).** `Parent *Entry` now exists on `entry.Entry`, wired in
+both `BuildTree` and `ops.go`'s `rebuildChildren`. Efficient up-propagation
+still needs to be built on top of it: on each `compareResultMsg`, walk up
+from the leaf via `Parent` OR-ing the dirty bit into each ancestor,
+**stopping as soon as an ancestor is already marked dirty** (its ancestors
+are transitively dirty too — free early exit). For "confirmed clean," each
+directory also needs a pending-descendant counter, initialized at build
+time (count of comparable leaves under it) and decremented as results
+arrive up the parent chain; it flips to confirmed-clean the instant the
+counter hits zero with no dirty bit set. Recomputing the aggregate
+top-down from scratch on every message instead of maintaining it
+incrementally would be O(n²) on a 70k-file tree — not viable at the scale
+this feature exists for.
+
+**Visibility rule — corrected 2026-07-22 against `Flatten`'s actual
+implementation** (built for Priority 3, `entry.go:193`). The original note
+here proposed one combined boolean, `visible = !(hidden && !renderHidden)
+&& !(focusMode && subtreeClean)`, reused as a single `Flatten` skip
+predicate. That's wrong for this feature specifically: Hidden's rule is a
+**line-level** omission (skip just this entry, keep recursing into its
+children — see Priority 3's done-note on why), but "clean directories
+auto-collapse... instead of disappearing" (below) is a **recursion-level**
+rule — the directory's own line must still render, only its children
+should stop being visited. Those can't be the same predicate. `Flatten`
+already anticipates this split: `skip` (line omission, Hidden's job) and
+recursion (today gated only by `Collapsed`) are independent levers, so
+this feature's job is to add a second recursion-gating condition
+alongside `Collapsed` — e.g. `!e.Collapsed && !(focusMode &&
+subtreeClean)` — not to fold a new bit into `skip`.
+
+- **Explicit hide always wins** (decided 2026-07-21): if the user
+  manually hid a subtree with `h` and it happens to contain a diff, focus
+  mode does not override that — the user is in control.
+- **Clean directories auto-collapse under focus mode rather than
+  vanishing** (decided 2026-07-21): unlike `Hidden`, which removes entries
+  from the flat list entirely, a subtree confirmed clean under focus mode
+  collapses to one dimmed line instead of disappearing, to preserve a
+  sense of tree structure on a huge comparison ("4,000 clean files lived
+  under here") rather than silently missing chunks of the tree.
+- **Pending subtrees default to visible** until proven clean. This makes
+  focus mode's view shrink monotonically as the background scan confirms
+  subtrees clean — never pops items *into* view, which would be the more
+  surprising/worse direction. On a huge tree this produces a good emergent
+  behavior for free: turn focus mode on and watch the visible tree
+  progressively narrow down to just the files that actually differ as the
+  scan completes.
+
+**Keybinding.** `f` — toggles focus mode globally (decided 2026-07-21).
+Considered and parked: a subtree-scoped "focus only within this
+directory" variant. No clear, non-confusing way to signify
+"focused-within-here" vs. "not-focused" at the boundary was found —
+revisit only if a concrete need for it shows up later.
+
+**Performance risk to remember at implementation time.** Today,
+`compareResultMsg` handling (`app.go:155-160`) mutates the entry in place
+and never calls `reflatten()` — visibility never depends on compare
+results today, so it doesn't need to. Once focus mode exists, a compare
+result *can* change visibility, so `Update` needs to reflatten while focus
+mode is active — but `Flatten` rebuilds the whole visible slice via
+recursive append (`entry.go:193`), so reflattening on every one of
+(potentially) tens of thousands of streamed messages is the same O(n²)
+trap as the propagation logic above. Needs throttling (e.g. only
+reflatten on an ancestor's pending→resolved transition, or batch on a
+short ticker) rather than reflattening unconditionally per message.
+
+**Status line, designed alongside (also not yet implemented).** Since the
+propagation logic above already has to track clean/pending/dirty counts
+per subtree, the root's counts fall out for free — no extra bookkeeping.
+Extends the existing status-bar priority chain
+(`app.go:430-441`, currently prompt → flash → default hints line) with one
+more layer:
+- New `showCounts bool` on the model. Three write sites: set `true` the
+  moment comparison starts; forced back to `false` the moment
+  `compareDoneMsg` fires (unconditional reset — no need to track whether
+  the user had manually overridden it); flipped by the toggle key at any
+  time in either phase.
+- Default while `showCounts` is true: `1,842 clean · 12 pending · 3
+  differ` (the leading `%d/%d` cursor-position prefix stays as-is either
+  way). The `pending` segment is dropped entirely once its count reaches
+  zero, rather than showing "0 pending".
+- Default while `showCounts` is false: today's hints line
+  (`q quit  ←→/enter collapse  ...`), unchanged.
+- `prompt`/`flash` still take priority over both — they're transient,
+  higher-urgency signals; this new layer only governs the "nothing else
+  going on" default slot.
+- Toggle key: **`t`** (decided 2026-07-21).
+- Hidden-but-dirty entries still count toward "differ": the counts
+  describe the tree's actual state, independent of what's currently
+  rendered, since explicit-hide-always-wins (above) means the rendered
+  view can disagree with the true count.
 
 ---
 

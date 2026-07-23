@@ -139,6 +139,8 @@ func printHelp(w io.Writer, prog string) {
 	fmt.Fprintf(w, "  d                     delete current item on every side it exists\n")
 	fmt.Fprintf(w, "                        (a/b/c/d are disabled in --read-only mode)\n")
 	fmt.Fprintf(w, "  r                     re-enumerate and re-compare current item (background)\n")
+	fmt.Fprintf(w, "  h                     toggle hidden flag on current item (and its subtree)\n")
+	fmt.Fprintf(w, "  H                     toggle whether hidden items are shown\n")
 	fmt.Fprintf(w, "  q, Ctrl-C             quit\n")
 	fmt.Fprintf(w, "\n.gitignore:\n")
 	fmt.Fprintf(w, "  Entries matched by a top-level .gitignore in any compared root (plus\n")

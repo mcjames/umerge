@@ -169,6 +169,22 @@ The entry is absent from at least one side.
 Columns where it is present are highlighted green; absent columns are
 blank.
 .El
+.Pp
+A hidden entry
+.Po
+see
+.Ic h Ns / Ns Ic H
+in
+.Sx KEY BINDINGS
+.Pc
+rendered while
+.Ic H
+is on keeps whichever of the colors above it would otherwise have, but
+much darker, with medium-gray text
+.Pq legible against the dark background regardless of category .
+The cursor row always looks the same regardless of whether the entry
+under it is hidden; move the cursor off an entry to see whether it is
+hidden.
 .Ss Diff counts
 Once a file comparison completes, a count is appended after the filename:
 .Bl -tag -width "= "
@@ -333,6 +349,28 @@ Picks up changes made outside
 .Nm
 since it started (files added, removed, or edited by another program).
 Does nothing but flash a message if another comparison is already running.
+.It Ic h
+Toggle the hidden flag on the entry at the cursor, propagating to its
+whole subtree.
+This is a user-managed
+.Dq ignore this
+flag, unrelated to dot-files or
+.Sx GITIGNORE FILTERING
+below.
+Hidden entries drop out of the tree view immediately unless
+.Ic H
+is on.
+A descendant can later be un-hidden on its own without disturbing an
+already-hidden ancestor's flag; reaching it to do so requires
+.Ic H
+first, since a hidden entry's cursor position no longer exists once it
+drops out of view.
+.It Ic H
+Toggle whether hidden entries are shown at all.
+When on, hidden entries are rendered in a much darker shade of their
+usual color, with medium-gray text, rather than omitted
+.Pq e.g. a hidden-but-changed entry still shows blue, just a dark navy
+instead of its usual pale blue .
 .It Ic q , Ctrl-C
 Quit
 .Nm .
