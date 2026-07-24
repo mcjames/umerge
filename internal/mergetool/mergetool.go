@@ -22,9 +22,16 @@ import (
 //
 // emacs behaviour:
 //
-//	one file   → emacs <file>
-//	two files  → emacs --eval (ediff-files "left" "right")
-//	three files → emacs --eval (ediff3 "left" "middle" "right")
+//	one file   → emacs -nw <file>
+//	two files  → emacs -nw --eval (ediff-files "left" "right")
+//	three files → emacs -nw --eval (ediff3 "left" "middle" "right")
+//
+// -nw forces emacs to stay in the invoking terminal rather than opening a
+// new GUI frame — otherwise plain `emacs` pops a separate window whenever
+// a display is available, which breaks the "suspend the TUI, run the tool
+// inline, resume" model umerge otherwise offers consistently for both
+// vim and emacs (vim never has this problem: it stays in the terminal it
+// was invoked from by default).
 func Command(e *entry.Entry, tool string) *exec.Cmd {
 	if e.IsDir {
 		return nil
@@ -76,6 +83,54 @@ func diffHighlightArgs() []string {
 	}
 }
 
+// ediffFaceArgs returns emacs --eval expressions that recolor ediff's
+// background diff faces (ediff-odd-diff-<letter>/ediff-even-diff-<letter>
+// — every diff region gets one or the other) to match umerge's own
+// directory-view palette, mirroring diffHighlightArgs' vim treatment.
+// letters is which buffer identifiers ediff uses for this comparison —
+// "A"/"B" for a plain ediff-files (2-way), "A"/"B"/"C" for a plain ediff3
+// (3-way; umerge never calls the ancestor-merge variant, so the separate
+// "Ancestor" faces ediff also defines are irrelevant here).
+//
+// Unlike vim, ediff has no separate "this region is a pure insertion, not
+// present on the other side" face (no equivalent of DiffAdd) — verified
+// against ediff-init.el's actual defface list. Every diff region, edit or
+// one-sided insertion alike, gets the same blue "changed" hue; there's no
+// green "unique" treatment to carry over.
+//
+// Deliberately does NOT theme ediff-current-diff-<letter> (the hunk the
+// cursor is on) or ediff-fine-diff-<letter> (word-level highlighting
+// within a hunk), even though both exist and an earlier version of this
+// function set them. Verified empirically (2026-07-23, after switching to
+// -nw so ediff stays in the terminal rather than opening a GUI frame)
+// that neither actually renders distinctly in a real -nw session — every
+// region just shows the plain odd/even background color, even after
+// forcing ediff-use-faces/ediff-force-faces. `ediff-highlight-diff` in
+// ediff-util.el is directly documented "Invoked for X displays only",
+// and fine-diff word-level highlighting showed the same behavior in
+// testing (confirmed with a clean single-word-difference case — no bold
+// emphasis on just the differing word, the whole line got one flat
+// color). So there's nothing to theme there in the mode umerge actually
+// launches in; setting those faces anyway would be dead code implying an
+// effect that never happens.
+//
+// Applied via --eval at launch time, not by editing the user's init
+// file — only affects umerge-launched sessions, same principle as vim's
+// -c flags. Unlike vim's ctermbg/guibg split, no separate terminal-color
+// value is needed: Emacs approximates a hex color to the terminal's
+// actual palette itself (confirmed via real -nw sessions rendering true
+// 24-bit color escape sequences for these faces).
+func ediffFaceArgs(letters []string) []string {
+	args := []string{"--eval", "(require 'ediff-init)"}
+	for _, l := range letters {
+		args = append(args,
+			"--eval", fmt.Sprintf(`(set-face-attribute 'ediff-odd-diff-%s nil :background "%s" :foreground "black")`, l, changedHex),
+			"--eval", fmt.Sprintf(`(set-face-attribute 'ediff-even-diff-%s nil :background "%s" :foreground "black")`, l, changedHex),
+		)
+	}
+	return args
+}
+
 func vimCommand(paths []string) *exec.Cmd {
 	switch len(paths) {
 	case 1:
@@ -89,13 +144,17 @@ func vimCommand(paths []string) *exec.Cmd {
 func emacsCommand(paths []string) *exec.Cmd {
 	switch len(paths) {
 	case 1:
-		return exec.Command("emacs", paths[0])
+		return exec.Command("emacs", "-nw", paths[0])
 	case 2:
-		return exec.Command("emacs", "--eval",
+		args := append([]string{"-nw"}, ediffFaceArgs([]string{"A", "B"})...)
+		args = append(args, "--eval",
 			fmt.Sprintf(`(ediff-files "%s" "%s")`, elispQuote(paths[0]), elispQuote(paths[1])))
+		return exec.Command("emacs", args...)
 	default:
-		return exec.Command("emacs", "--eval",
+		args := append([]string{"-nw"}, ediffFaceArgs([]string{"A", "B", "C"})...)
+		args = append(args, "--eval",
 			fmt.Sprintf(`(ediff3 "%s" "%s" "%s")`, elispQuote(paths[0]), elispQuote(paths[1]), elispQuote(paths[2])))
+		return exec.Command("emacs", args...)
 	}
 }
 

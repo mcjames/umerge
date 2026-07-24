@@ -277,8 +277,45 @@ directory and file comparison views, instead of
 unrelated defaults.
 This only affects the launched session, not the user's
 .Pa .vimrc .
-.Xr emacs 1 Ns / Ns Sy ediff
-does not have this treatment yet.
+.Pp
+.Sy ediff
+gets the same treatment: its
+.Ic ediff-odd-diff- Ns Ar X
+and
+.Ic ediff-even-diff- Ns Ar X
+faces
+.Pq Ar X No being A, B, or C
+are recolored to the same blue — every difference in the buffer gets
+this color, since
+.Sy ediff
+has no equivalent of
+.Ic DiffAdd
+(a region present in only one buffer): edit or one-sided insertion
+alike, every difference uses the same faces.
+.Sy ediff Ns 's
+own emphasis for the difference you are currently on
+.Pq Ic ediff-current-diff- Ns Ar X
+and its word-level highlighting within a hunk
+.Pq Ic ediff-fine-diff- Ns Ar X
+are deliberately left alone: testing found neither actually renders
+distinctly in a terminal session, only in a graphical frame, so
+theming them would have no visible effect.
+.Nm
+always launches
+.Sy emacs
+with
+.Fl nw ,
+so it stays in the invoking terminal rather than opening a new window —
+otherwise plain
+.Xr emacs 1
+pops a separate graphical frame whenever a display is available, which
+would break the
+.Dq suspend the display, run the tool, resume
+model this section describes.
+This only affects the launched session, not the user's
+.Pa .emacs
+or
+.Pa init.el .
 .Pp
 The entry is automatically re-compared when the tool exits, in case it
 was edited.

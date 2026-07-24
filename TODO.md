@@ -11,6 +11,11 @@ Items carried over from the original Python port are noted as such;
 everything else is new, added after evaluating umerge against Beyond
 Compare / Araxis Merge and against git's own tooling.
 
+See also **`POLISH.md`** — UX/trust/discoverability findings (in-app help,
+search, delete confirmation, silent permission/symlink swallowing,
+distribution) that don't map onto a numbered priority yet, split out
+2026-07-23 to keep this file focused on the versioned roadmap.
+
 **Testing policy:** the Python version had no automated tests (all
 interactive). Priority 0 below is a one-time catchup burst for the
 existing untested Go code. After that, the policy going forward is: any
@@ -30,6 +35,48 @@ were the only remaining Python-original features with zero implementation
 promoted to Priority 2–4, ahead of the filtering/external-integration work
 that was previously next in line. A few items below were also found to be
 stale (already implemented, still listed as open) and corrected in place.
+
+---
+
+## 1.0 release scope (decided 2026-07-23)
+
+Deliberate decision to scope a real 1.0 rather than let this stay a
+perpetually-pre-1.0 hobby project. Bar: **match the Python original's
+actual (working) functionality on a real, messy tree, plus what's already
+been shipped beyond it** — not "every enhancement idea in this file."
+
+**What's left before 1.0:**
+- **Priority 2 — Selection, core only.** `s` toggle (propagate down the
+  no-holes subtree), bulk `d`/`a`/`b`/3-way-copy acting on a selection.
+  **`S` (bulk-select-by-rule) is explicitly deferred, not a parity loss**:
+  checked Python's actual implementation (`Match3.selection_matches`
+  ignores both its arguments and hardcodes one answer; the controller only
+  wires up the `a`/absent branch, `u`/`c`/`i` just print a message and do
+  nothing) — Python's own bulk-select-by-rule doesn't work, so skipping it
+  ships the one part of Python's selection model that actually did.
+- **Priority 4 — 3-way merge workflow**, in full: `m`/`M`/`n`/`R`,
+  resolution-status markers, the `diff3 -m`/conflict classifier.
+
+**Done, closing out this bar:**
+- **`git difftool -d` end-to-end** — ✅ manually verified 2026-07-23 by
+  hand against a real repo: launches cleanly, worked "wonderfully."
+  Not exhaustively fuzzed, but confirmed sufficient for basic real use,
+  which is the bar here — see Priority 6.
+- Hidden items (Priority 3) — the third zero-implementation Python feature
+  identified by the 2026-07-19 audit — shipped 2026-07-22.
+
+**Explicitly deferred to post-1.0 (not gaps, decisions):** Priority 3b
+(focus-on-diffs mode — new idea, not a Python feature), Priority 5's
+include/exclude filters and rename/move detection, Priority 6's Mercurial
+support and TUI file-manager hook docs, Priority 8's ediff color theming
+and generalized merge-tool config, Priority 9's `--colors` depth flag and
+the `~/.umergerc.toml` config file (Python had INI theming; not required
+to match its actual working behavior), Priority 10's minor 3-way
+partial-presence color nuance (blanket green vs. Python's couple of
+edge-case shades — cosmetic, not a missing capability), Priority 11
+(scriptability), and Priority 12's cancel-on-quit/lazy-loading (both
+explicitly new-to-Go concerns, not things the single-threaded Python
+version ever had to address).
 
 ---
 
@@ -829,7 +876,9 @@ for any tool, not something specific to umerge — not worth designing
 around.)
 
 - Verify umerge launches cleanly and exits without leftover terminal state
-  when invoked non-interactively by `git difftool -d`.
+  when invoked non-interactively by `git difftool -d` — ✅ done (manually
+  verified 2026-07-23 against a real repo; not exhaustively fuzzed, but
+  confirmed sufficient for basic real use).
 - The 3-way mode's real differentiated use case is comparing three
   arbitrary tree *snapshots* (three deploy configs, three `git worktree`
   checkouts of different branches) — not tied to an in-progress git merge.
@@ -990,7 +1039,7 @@ Araxis Merge.
   diff-capable without umerge needing bespoke support for each one. Small
   change — the launch mechanism already exists for two tools, this is
   mostly a config-shape change in `mergetool.Command`.
-- **Diff color themes — vimdiff done ✅ (2026-07-19), ediff still open.**
+- **Diff color themes — vimdiff done ✅ (2026-07-19), ediff done ✅ (2026-07-23).**
   vimdiff's default `DiffAdd`/`DiffChange`/`DiffDelete`/`DiffText` colors
   are unrelated to umerge's own tree palette, which made the jump from
   browsing the tree into a file feel like switching apps. Resolved the
@@ -1016,13 +1065,96 @@ Araxis Merge.
   top of unit tests in `mergetool_test.go` pinning the exact command-line
   built for one/two/three files.
 
-  **Still open:** the same treatment for ediff
-  (`ediff-current-diff-A/B/C`, `ediff-fine-diff-A/B/C`, the 3-way `-C`
-  variants) — not done this pass, only vim was asked for. **Generalize
-  beyond hardcoded vim/emacs** (above) and the config-file override in
-  Priority 9 (`[theme.vimdiff]`/`[theme.ediff]`) are also both still open;
-  the colors are hardcoded constants in `mergetool.go` for now, not yet
-  user-overridable.
+  **ediff done 2026-07-23**, prompted by a friend about to try umerge
+  with `--merge emacs` for outside feedback. Verified the actual face
+  list against a real installed Emacs (29.3) rather than assuming — batch
+  `mapatoms` over every `ediff-`-prefixed face confirmed exactly
+  `current`/`odd`/`even`/`fine`-diff × `A`/`B`/`C`/`Ancestor` exist, and
+  nothing else (no separate `Ancestor` faces needed since umerge only
+  ever calls plain `ediff3`, never the ancestor-merge variant). Important
+  finding from that check: **ediff has no equivalent of vim's `DiffAdd`**
+  — every diff region, whether an edit or a one-sided insertion, uses the
+  same faces, so there's no separate green "unique" treatment to carry
+  over; every region gets the blue "changed" hue.
+
+  **Revised same day after the friend flagged a separate but related
+  problem: plain `emacs` was popping a full-screen GUI frame** (their
+  setup is Spacemacs, whose GUI frame defaults to fullscreen) instead of
+  staying in the terminal umerge was already running in — breaking the
+  "suspend the display, run the tool, resume" model the man page
+  describes, which vim never has a problem with (it stays in its
+  invoking terminal by default; a separate GUI frame is a real, unrelated
+  binary, `gvim`, that has to be explicitly requested). Fixed by adding
+  `-nw` to every `emacs` invocation in `emacsCommand`.
+
+  **That fix, in turn, invalidated part of the color work done earlier
+  the same day and caught before it shipped.** The first pass went beyond
+  a flat vim-style port: `ediff-current-diff-<letter>` (the hunk the
+  cursor is on) got a saturated blue matching the tree's own cursor-row
+  treatment, and `ediff-fine-diff-<letter>` (word-level highlighting)
+  got the same blue bolded, mirroring `DiffText`. Both were verified
+  working — in `--batch` mode, which doesn't render to a real display or
+  terminal at all, so it never actually exercises `-nw` rendering.
+  Once `-nw` became the real launch mode, live-pty verification against
+  an actual terminal session (constructing test cases specifically to
+  make the current-diff and fine-diff regions unambiguous — a single
+  isolated diff, then a single-word change in an otherwise identical
+  line) showed **neither face renders distinctly in a real terminal
+  session** — the differing region always just shows the plain
+  odd/even background color, even after explicitly forcing
+  `ediff-use-faces`/`ediff-force-faces`. Root-caused via ediff's own
+  source: `ediff-highlight-diff` (`ediff-util.el`, the function that
+  applies the current-diff overlay) is directly docstring'd "Invoked for
+  X displays only" — a real, longstanding Emacs/ediff limitation, not an
+  umerge bug. Simplified `ediffFaceArgs` to theme only
+  `ediff-odd-diff-<letter>`/`ediff-even-diff-<letter>` (verified to
+  render as real 24-bit truecolor in an actual `-nw` session) and removed
+  the current-diff/fine-diff theming entirely — setting faces that
+  provably never render in the mode umerge actually launches in would
+  just be dead code implying an effect that doesn't happen. The
+  `cursorChangedHex` constant this introduced was removed along with it.
+
+  Implementation: `ediffFaceArgs` in `mergetool.go` builds one `--eval
+  (set-face-attribute ...)` per face, prepended before the final
+  `ediff-files`/`ediff3` launch eval — same "extra flags at launch time,
+  never touches the user's init file" principle as vim's `-c` args.
+  Unlike vim (which needs a separate `ctermbg` for terminals without
+  true-color), Emacs approximates a hex color to the terminal's actual
+  palette itself — confirmed via real `-nw` pty sessions rendering true
+  24-bit color escape sequences (`\x1b[48;2;166;202;240m`) matching
+  `changedHex` exactly, not just in `--batch` mode. Unit tests in
+  `mergetool_test.go` pin the exact `--eval` sequence for both 2-way and
+  3-way (including `-nw` itself), plus a dedicated test asserting
+  current-diff/fine-diff are *not* touched, so a future well-intentioned
+  attempt to "finish" this theming doesn't silently reintroduce dead
+  code.
+
+  **Generalize beyond hardcoded vim/emacs** (above) and the config-file
+  override in Priority 9 (`[theme.vimdiff]`/`[theme.ediff]`) are still
+  open — the colors are hardcoded constants in `mergetool.go` for both
+  tools now, not yet user-overridable.
+- **`diffopt+=linematch:60` for vimdiff (discussed 2026-07-23, not yet
+  implemented).** Came up while weighing whether umerge should adopt a
+  modern structural/TUI diff tool (difftastic, delta) as an alternative to
+  vimdiff/ediff for viewing. Decided against that: those tools are
+  view-only (they format and page diff output, they can't edit), which
+  breaks down for exactly the case umerge's own 3-way conflict handling
+  depends on — Priority 4 deliberately builds no in-app conflict UI and
+  hands real conflicts to vimdiff/ediff for editing, something a pure
+  viewer can't do at all. Adding a second default tool just for the
+  read-only case would also cut against the muscle-memory concern that
+  started this conversation — the user explicitly prefers one tool used
+  consistently over several. The better-of-both-worlds alternative: Vim/
+  Neovim's `diffopt+=linematch:60` does much smarter intra-hunk line
+  matching (closer to difftastic's structural diffing quality) while
+  staying the same editor, same keybindings, same edit capability.
+  `vimCommand` (`internal/mergetool/mergetool.go`) already injects
+  `-c "highlight ..."` flags for color-matching (see above) — adding
+  `-c "set diffopt+=...,linematch:60"` alongside them is the same
+  mechanism, just one more flag. For anyone who genuinely wants
+  difftastic/delta anyway, "generalize beyond hardcoded vim/emacs" (above)
+  is the right escape hatch — an opt-in the user configures themselves,
+  not a second umerge default.
 
 ---
 

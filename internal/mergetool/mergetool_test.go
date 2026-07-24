@@ -128,18 +128,47 @@ func TestDiffHighlightArgs_DeleteIsNeutralNotAThirdColor(t *testing.T) {
 }
 
 func TestCommand_EmacsOneFile(t *testing.T) {
+	// -nw keeps emacs in the invoking terminal instead of popping a new
+	// GUI frame — otherwise plain `emacs` opens a separate window
+	// whenever a display is available, breaking the "suspend the TUI,
+	// run the tool inline, resume" model vim already gets for free.
 	e := &entry.Entry{Left: strptr("/a")}
 	cmd := Command(e, "emacs")
-	want := []string{"emacs", "/a"}
+	want := []string{"emacs", "-nw", "/a"}
 	if !reflect.DeepEqual(cmd.Args, want) {
 		t.Errorf("Args = %v, want %v", cmd.Args, want)
 	}
 }
 
+// twoWayFaceArgs/threeWayFaceArgs pin the exact --eval sequence
+// ediffFaceArgs must produce for A/B and A/B/C, hardcoded literally
+// (not by calling ediffFaceArgs itself) for the same reason
+// TestCommand_VimTwoFiles/ThreeFiles hardcode vim's -c flags rather than
+// calling diffHighlightArgs: catches a regression in the generator
+// itself, not just in how Command wires it in.
+func twoWayFaceArgs() []string {
+	return []string{
+		"--eval", "(require 'ediff-init)",
+		"--eval", `(set-face-attribute 'ediff-odd-diff-A nil :background "#a6caf0" :foreground "black")`,
+		"--eval", `(set-face-attribute 'ediff-even-diff-A nil :background "#a6caf0" :foreground "black")`,
+		"--eval", `(set-face-attribute 'ediff-odd-diff-B nil :background "#a6caf0" :foreground "black")`,
+		"--eval", `(set-face-attribute 'ediff-even-diff-B nil :background "#a6caf0" :foreground "black")`,
+	}
+}
+
+func threeWayFaceArgs() []string {
+	args := twoWayFaceArgs()
+	return append(args,
+		"--eval", `(set-face-attribute 'ediff-odd-diff-C nil :background "#a6caf0" :foreground "black")`,
+		"--eval", `(set-face-attribute 'ediff-even-diff-C nil :background "#a6caf0" :foreground "black")`,
+	)
+}
+
 func TestCommand_EmacsTwoFiles(t *testing.T) {
 	e := &entry.Entry{Left: strptr("/a"), Right: strptr("/b")}
 	cmd := Command(e, "emacs")
-	want := []string{"emacs", "--eval", `(ediff-files "/a" "/b")`}
+	want := append([]string{"emacs", "-nw"}, twoWayFaceArgs()...)
+	want = append(want, "--eval", `(ediff-files "/a" "/b")`)
 	if !reflect.DeepEqual(cmd.Args, want) {
 		t.Errorf("Args = %v, want %v", cmd.Args, want)
 	}
@@ -148,9 +177,64 @@ func TestCommand_EmacsTwoFiles(t *testing.T) {
 func TestCommand_EmacsThreeFiles(t *testing.T) {
 	e := &entry.Entry{Left: strptr("/a"), Middle: strptr("/m"), Right: strptr("/b")}
 	cmd := Command(e, "emacs")
-	want := []string{"emacs", "--eval", `(ediff3 "/a" "/m" "/b")`}
+	want := append([]string{"emacs", "-nw"}, threeWayFaceArgs()...)
+	want = append(want, "--eval", `(ediff3 "/a" "/m" "/b")`)
 	if !reflect.DeepEqual(cmd.Args, want) {
 		t.Errorf("Args = %v, want %v", cmd.Args, want)
+	}
+}
+
+// The following cover recoloring ediff's built-in diff faces to match
+// umerge's own directory-view palette, the same treatment vimdiff already
+// got — so switching merge tools doesn't also switch color languages.
+// Only odd/even-diff are themed; see ediffFaceArgs' doc comment for why
+// current-diff/fine-diff are deliberately left alone (verified not to
+// render distinctly in the -nw sessions umerge actually launches).
+
+func TestEdiffFaceArgs_RequiresEdiffInitFirst(t *testing.T) {
+	args := ediffFaceArgs([]string{"A", "B"})
+	if len(args) < 2 || args[0] != "--eval" || args[1] != "(require 'ediff-init)" {
+		t.Fatalf("expected (require 'ediff-init) as the first --eval, got %v", args[:2])
+	}
+}
+
+func TestEdiffFaceArgs_OddEvenUseChangedHex(t *testing.T) {
+	args := ediffFaceArgs([]string{"A", "B"})
+	for _, face := range []string{"ediff-odd-diff-A", "ediff-even-diff-A"} {
+		found := false
+		for _, a := range args {
+			if strings.Contains(a, face) && strings.Contains(a, changedHex) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s should use changedHex (%s), matching app.go's styleChanged", face, changedHex)
+		}
+	}
+}
+
+func TestEdiffFaceArgs_DoesNotTouchCurrentOrFineDiff(t *testing.T) {
+	// Verified empirically that neither face renders distinctly in a real
+	// -nw session (ediff-highlight-diff is documented "Invoked for X
+	// displays only"; fine-diff word-level highlighting showed the same
+	// behavior under direct testing) — setting them would be dead code.
+	args := ediffFaceArgs([]string{"A", "B", "C"})
+	for _, a := range args {
+		if strings.Contains(a, "ediff-current-diff-") || strings.Contains(a, "ediff-fine-diff-") {
+			t.Errorf("should not set current-diff or fine-diff faces (verified not to render in -nw), got %q", a)
+		}
+	}
+}
+
+func TestEdiffFaceArgs_TwoLettersProducesNoThirdLetterFaces(t *testing.T) {
+	// 2-way (ediff-files) only ever uses buffers A/B; a stray "C" face
+	// setting would be harmless in practice (ediff-init defines the face
+	// regardless) but is a sign the letter list was built wrong.
+	args := ediffFaceArgs([]string{"A", "B"})
+	for _, a := range args {
+		if strings.Contains(a, "-diff-C ") {
+			t.Errorf("2-way face args should not touch any -C face, got %q", a)
+		}
 	}
 }
 
@@ -164,34 +248,42 @@ func TestCommand_EmacsThreeFiles(t *testing.T) {
 // trees, where a crafted filename is exactly the kind of thing that could
 // appear.
 
+// wantTail asserts that got's final len(want) elements equal want —
+// these escaping tests only care about the launch eval at the very end
+// of cmd.Args, not the face-theming --eval args now prepended ahead of
+// it (covered separately above), so checking the whole slice would make
+// them fail every time face-args changes for reasons unrelated to
+// escaping.
+func wantTail(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) < len(want) {
+		t.Fatalf("Args = %v, too short to contain want tail %v", got, want)
+	}
+	tail := got[len(got)-len(want):]
+	if !reflect.DeepEqual(tail, want) {
+		t.Errorf("Args tail = %v, want %v", tail, want)
+	}
+}
+
 func TestCommand_EmacsTwoFiles_QuoteInFilenameIsEscaped(t *testing.T) {
 	evil := `foo".png") (shell-command "touch PWNED") (ediff-files "bar`
 	e := &entry.Entry{Left: strptr(evil), Right: strptr("/b")}
 	cmd := Command(e, "emacs")
-	want := []string{"emacs", "--eval",
-		`(ediff-files "foo\".png\") (shell-command \"touch PWNED\") (ediff-files \"bar" "/b")`}
-	if !reflect.DeepEqual(cmd.Args, want) {
-		t.Errorf("Args = %v, want %v", cmd.Args, want)
-	}
+	wantTail(t, cmd.Args, []string{"--eval",
+		`(ediff-files "foo\".png\") (shell-command \"touch PWNED\") (ediff-files \"bar" "/b")`})
 }
 
 func TestCommand_EmacsThreeFiles_QuoteInFilenameIsEscaped(t *testing.T) {
 	evil := `x"y`
 	e := &entry.Entry{Left: strptr(evil), Middle: strptr("/m"), Right: strptr("/b")}
 	cmd := Command(e, "emacs")
-	want := []string{"emacs", "--eval", `(ediff3 "x\"y" "/m" "/b")`}
-	if !reflect.DeepEqual(cmd.Args, want) {
-		t.Errorf("Args = %v, want %v", cmd.Args, want)
-	}
+	wantTail(t, cmd.Args, []string{"--eval", `(ediff3 "x\"y" "/m" "/b")`})
 }
 
 func TestCommand_EmacsTwoFiles_BackslashInFilenameIsEscaped(t *testing.T) {
 	e := &entry.Entry{Left: strptr(`a\b`), Right: strptr("/b")}
 	cmd := Command(e, "emacs")
-	want := []string{"emacs", "--eval", `(ediff-files "a\\b" "/b")`}
-	if !reflect.DeepEqual(cmd.Args, want) {
-		t.Errorf("Args = %v, want %v", cmd.Args, want)
-	}
+	wantTail(t, cmd.Args, []string{"--eval", `(ediff-files "a\\b" "/b")`})
 }
 
 func TestElispQuote_EscapesBackslashBeforeQuote(t *testing.T) {

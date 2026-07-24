@@ -43,10 +43,12 @@ own directory-diff mechanism.
   when you return, in case you edited it. Re-compare any entry manually
   with `r` (also re-enumerates directories, picking up files changed
   outside umerge)
-- `vimdiff` opens with its diff colors matching the tree's own palette
-  (changed → blue, present-on-one-side → green), the same way Araxis
-  Merge uses one consistent scheme across its directory and file views,
-  instead of vim's unrelated defaults (`ediff` doesn't have this yet)
+- `vimdiff`/`ediff` both open with their diff colors matching the tree's
+  own palette (changed → blue, present-on-one-side → green for vim;
+  ediff has no separate "present-on-one-side" face, so every difference
+  gets the same blue), the same way Araxis Merge uses one consistent
+  scheme across its directory and file views, instead of each editor's
+  unrelated defaults
 - Collapsible directories, diff-hunk counts per file, Unicode tree symbols
   (▶/▼) by default, with an ASCII fallback (`-A`/`--ascii`) for terminals
   that render the Unicode ones at the wrong width
@@ -147,7 +149,6 @@ so the git integration is a safe viewer by default.
 Development is tracked in [`TODO.md`](TODO.md); in planned order:
 
 - Selection and bulk operations
-- Hidden-items toggle
 - The full three-way merge workflow (`diff3`-based auto-merge, resolution
   tracking, plus an `n` key to merge the entire tree in one keystroke)
 - Wildcard/regex include/exclude filters, plus options to ignore
@@ -155,8 +156,6 @@ Development is tracked in [`TODO.md`](TODO.md); in planned order:
 - Nested per-directory `.gitignore` support (currently only the top-level
   file is read)
 - Deeper git/Mercurial integration docs
-- The same tree-matching color treatment for `ediff` (vim's got it; emacs
-  doesn't yet)
 - A `~/.umergerc.toml` config file with theming, including making the
   `vimdiff`/`ediff` color match user-overridable instead of hardcoded
 - The remaining nuanced 3-way partial-presence colors
