@@ -47,6 +47,14 @@ type Entry struct {
 	// back on its own without disturbing an ancestor's flag — Hidden is a
 	// plain per-entry bool, not an aggregated/upward-propagated state.
 	Hidden bool
+
+	// Selected is the `s` key's tree-wide selection flag, toggled via
+	// SetSelected. Unlike Hidden, a descendant is never independently out
+	// of sync with a selected ancestor: the no-holes invariant (TODO.md
+	// Priority 2) means a directory's Selected always means "100% of this
+	// subtree is selected," enforced by callers via HasSelectedAncestor
+	// rather than by anything in this struct.
+	Selected bool
 }
 
 // BuildPair constructs a merged tree for a two-way comparison. ig may be nil
@@ -179,6 +187,34 @@ func (e *Entry) SetHidden(value bool) {
 	for _, c := range e.Children {
 		c.SetHidden(value)
 	}
+}
+
+// SetSelected sets Selected on e and every descendant to value, mirroring
+// SetHidden's propagate-down semantics. Selecting or deselecting a
+// directory always applies to its whole current subtree — this is what
+// keeps the no-holes invariant true after every toggle: callers must
+// still check HasSelectedAncestor before calling this, since propagating
+// down here does nothing to stop a caller from toggling a node whose
+// ancestor is already selected, which would leave the ancestor's flag
+// lying about what's underneath it.
+func (e *Entry) SetSelected(value bool) {
+	e.Selected = value
+	for _, c := range e.Children {
+		c.SetSelected(value)
+	}
+}
+
+// HasSelectedAncestor reports whether any ancestor of e (not e itself) is
+// selected. Callers use this to block toggling selection on e when it
+// would create or hide a hole in an ancestor's "100% selected" invariant
+// — see TODO.md Priority 2's no-holes design.
+func (e *Entry) HasSelectedAncestor() bool {
+	for p := e.Parent; p != nil; p = p.Parent {
+		if p.Selected {
+			return true
+		}
+	}
+	return false
 }
 
 // Flatten returns the visible entries in depth-first order, skipping

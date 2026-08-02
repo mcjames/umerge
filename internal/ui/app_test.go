@@ -1162,6 +1162,246 @@ func TestUpdate_KeyCapitalH_TogglesRenderHiddenAndRevealsHiddenEntries(t *testin
 	}
 }
 
+func TestUpdate_KeyS_TogglesSelectionAndPropagatesToChildren(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	child := &entry.Entry{Name: "child.txt"}
+	dir := &entry.Entry{Name: "dir", IsDir: true, Children: []*entry.Entry{child}}
+	child.Parent = dir
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{dir})
+	m.cursor = 0 // dir
+
+	updated, _ := m.Update(keyMsg('s'))
+	m = updated.(Model)
+
+	if !dir.Selected || !child.Selected {
+		t.Fatalf("selecting dir should propagate to child: dir.Selected=%v child.Selected=%v", dir.Selected, child.Selected)
+	}
+
+	// Toggling again deselects the whole subtree.
+	updated, _ = m.Update(keyMsg('s'))
+	m = updated.(Model)
+	if dir.Selected || child.Selected {
+		t.Fatalf("toggling s again should deselect the whole subtree: dir.Selected=%v child.Selected=%v", dir.Selected, child.Selected)
+	}
+}
+
+// Covers the no-holes invariant (TODO.md Priority 2): a descendant of an
+// already-selected ancestor can't be toggled independently — that would
+// either leave the ancestor lying about what's underneath it (deselect)
+// or be a no-op disguised as one (re-select).
+func TestUpdate_KeyS_BlockedWhenAncestorAlreadySelected(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	child := &entry.Entry{Name: "child.txt"}
+	dir := &entry.Entry{Name: "dir", IsDir: true, Children: []*entry.Entry{child}}
+	child.Parent = dir
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{dir})
+	m.cursor = 0
+	updated, _ := m.Update(keyMsg('s')) // select dir, propagates to child
+	m = updated.(Model)
+
+	m.cursor = 1
+	if m.flat[1] != child {
+		t.Fatalf("setup: m.flat[1] = %+v, want child", m.flat[1])
+	}
+	updated, _ = m.Update(keyMsg('s'))
+	m = updated.(Model)
+
+	if !child.Selected {
+		t.Error("child.Selected should remain true — toggling under a selected ancestor is a no-op, not a deselect")
+	}
+	if m.flash == "" {
+		t.Error("flash should explain why nothing happened")
+	}
+}
+
+func TestUpdate_KeyEsc_ClearsWholeSelectionRegardlessOfCursorPosition(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	child := &entry.Entry{Name: "child.txt"}
+	dir := &entry.Entry{Name: "dir", IsDir: true, Children: []*entry.Entry{child}}
+	child.Parent = dir
+	other := &entry.Entry{Name: "other.txt", Selected: true}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{dir, other})
+	m.cursor = 0
+	updated, _ := m.Update(keyMsg('s')) // select dir, propagates to child
+	m = updated.(Model)
+	if !dir.Selected || !child.Selected || !other.Selected {
+		t.Fatalf("setup: expected dir, child, and other all selected, got dir=%v child=%v other=%v",
+			dir.Selected, child.Selected, other.Selected)
+	}
+
+	// Cursor is somewhere unrelated to either selected item — esc should
+	// still reach both, since selection is tree-wide, not cursor-scoped.
+	m.cursor = 2 // other.txt, itself part of the selection but not the cursor's own toggle target
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+
+	if dir.Selected || child.Selected || other.Selected {
+		t.Fatalf("esc should clear every selected root and its subtree: dir=%v child=%v other=%v",
+			dir.Selected, child.Selected, other.Selected)
+	}
+}
+
+func TestUpdate_KeyEsc_NoOpWhenNothingSelected(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	e := &entry.Entry{Name: "file.txt"}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+
+	if e.Selected {
+		t.Error("e.Selected should still be false")
+	}
+	if cmd != nil {
+		t.Error("esc with nothing selected should not produce a command")
+	}
+}
+
+func TestUpdate_KeyD_BulkDeletesSelectionInsteadOfCursorItem(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	aPath := writeFile(t, leftRoot, "a.txt", "a\n")
+	bPath := writeFile(t, leftRoot, "b.txt", "b\n")
+	cPath := writeFile(t, leftRoot, "c.txt", "c\n")
+	a := &entry.Entry{Name: "a.txt", Left: &aPath, Selected: true}
+	b := &entry.Entry{Name: "b.txt", Left: &bPath} // cursor lands here, not selected
+	c := &entry.Entry{Name: "c.txt", Left: &cPath, Selected: true}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{a, b, c})
+	m.cursor = 1
+
+	updated, _ := m.Update(keyMsg('d'))
+	m = updated.(Model)
+
+	if _, err := os.Stat(aPath); !os.IsNotExist(err) {
+		t.Errorf("a.txt (selected) should be deleted, err=%v", err)
+	}
+	if _, err := os.Stat(cPath); !os.IsNotExist(err) {
+		t.Errorf("c.txt (selected) should be deleted, err=%v", err)
+	}
+	if _, err := os.Stat(bPath); err != nil {
+		t.Errorf("b.txt (cursor item, not selected) should survive: %v", err)
+	}
+	if len(m.entries) != 1 || m.entries[0] != b {
+		t.Fatalf("m.entries = %+v, want just b", m.entries)
+	}
+}
+
+func TestUpdate_KeyA_TwoWay_BulkCopiesSelectionInsteadOfCursorItem(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	aPath := writeFile(t, leftRoot, "a.txt", "a\n")
+	bPath := writeFile(t, leftRoot, "b.txt", "b\n")
+	a := &entry.Entry{Name: "a.txt", Left: &aPath, Selected: true}
+	b := &entry.Entry{Name: "b.txt", Left: &bPath} // cursor lands here, not selected
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{a, b})
+	m.cursor = 1
+
+	updated, _ := m.Update(keyMsg('a'))
+	m = updated.(Model)
+
+	if a.Right == nil {
+		t.Error("a.txt (selected) should have been copied to the right")
+	}
+	if b.Right != nil {
+		t.Error("b.txt (cursor item, not selected) should not have been copied")
+	}
+}
+
+func TestUpdate_ThreeWay_KeyA_BulkCopyPromptActsOnSelection(t *testing.T) {
+	leftRoot, middleRoot, rightRoot := t.TempDir(), t.TempDir(), t.TempDir()
+	aPath := writeFile(t, leftRoot, "a.txt", "a\n")
+	bPath := writeFile(t, leftRoot, "b.txt", "b\n")
+	a := &entry.Entry{Name: "a.txt", Left: &aPath, Selected: true}
+	b := &entry.Entry{Name: "b.txt", Left: &bPath} // cursor lands here, not selected
+
+	m := newTestModel(3, leftRoot, middleRoot, rightRoot, []*entry.Entry{a, b})
+	m.cursor = 1
+
+	// A selection still goes through the normal two-step prompt in 3-way
+	// mode — only the eventual target (selection vs. cursor item) changes.
+	updated, _ := m.Update(keyMsg('a')) // "Copy from A (left) to:"
+	m = updated.(Model)
+	if m.pendingCopyFrom != 'a' {
+		t.Fatalf("setup: pendingCopyFrom = %q, want 'a'", m.pendingCopyFrom)
+	}
+
+	updated, _ = m.Update(keyMsg('c')) // destination: middle
+	m = updated.(Model)
+
+	if a.Middle == nil {
+		t.Error("a.txt (selected) should have been copied to middle")
+	}
+	if b.Middle != nil {
+		t.Error("b.txt (cursor item, not selected) should not have been copied")
+	}
+}
+
+func TestSelectionGutter_MarkerForSelectedEntry_Unicode(t *testing.T) {
+	e := &entry.Entry{Name: "file.txt", Selected: true}
+	got := selectionGutter(e, false)
+	want := styleSelectedMarker.Render(selectionMarkerGlyphUnicode) + " "
+	if got != want {
+		t.Errorf("selectionGutter = %q, want %q", got, want)
+	}
+}
+
+func TestSelectionGutter_MarkerForSelectedEntry_ASCII(t *testing.T) {
+	e := &entry.Entry{Name: "file.txt", Selected: true}
+	got := selectionGutter(e, true)
+	want := styleSelectedMarker.Render(selectionMarkerGlyphASCII) + " "
+	if got != want {
+		t.Errorf("selectionGutter = %q, want %q", got, want)
+	}
+}
+
+func TestSelectionGutter_BlankForUnselectedOrNilEntry(t *testing.T) {
+	want := strings.Repeat(" ", selectionGutterWidth)
+	if got := selectionGutter(nil, false); got != want {
+		t.Errorf("selectionGutter(nil) = %q, want %q", got, want)
+	}
+	e := &entry.Entry{Name: "file.txt"}
+	if got := selectionGutter(e, false); got != want {
+		t.Errorf("selectionGutter(unselected) = %q, want %q", got, want)
+	}
+}
+
+func TestColWidths_ReservesSpaceForSelectionGutter(t *testing.T) {
+	m := Model{ways: 2, width: 42}
+	widths := m.colWidths()
+	total := selectionGutterWidth + widths[0] + widths[1] + 1 // +1 separator
+	if total != m.width {
+		t.Errorf("gutter(%d) + widths(%v) + separators = %d, want m.width (%d)",
+			selectionGutterWidth, widths, total, m.width)
+	}
+}
+
+func TestView_StatusBarShowsEscClearHintWhenSelectionActive(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	e := &entry.Entry{Name: "file.txt", Selected: true}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	m.width, m.height = 60, 10
+
+	if got := m.View(); !strings.Contains(got, "esc clear") {
+		t.Errorf("View() = %q, want it to contain the esc-clear hint when a selection is active", got)
+	}
+}
+
+func TestView_StatusBarOmitsEscClearHintWhenNothingSelected(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	e := &entry.Entry{Name: "file.txt"}
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{e})
+	m.width, m.height = 60, 10
+
+	if got := m.View(); strings.Contains(got, "esc clear") {
+		t.Errorf("View() = %q, should not mention esc clear when nothing is selected", got)
+	}
+}
+
 func TestRowCols_HiddenEntryUsesDarkChangedBackgroundWithGrayText(t *testing.T) {
 	leftRoot, rightRoot := t.TempDir(), t.TempDir()
 	leftPath := writeFile(t, leftRoot, "file.txt", "one\n")

@@ -36,6 +36,105 @@ func TestCopyLetterToSide(t *testing.T) {
 	}
 }
 
+func TestTwoWayDest(t *testing.T) {
+	cases := map[byte]byte{'l': 'r', 'r': 'l'}
+	for side, want := range cases {
+		if got := twoWayDest(side); got != want {
+			t.Errorf("twoWayDest(%q) = %q, want %q", side, got, want)
+		}
+	}
+}
+
+func TestSelectedRoots_ReturnsMaximalSubtreesOnly(t *testing.T) {
+	grandchild := &entry.Entry{Name: "grandchild"}
+	child := &entry.Entry{Name: "child", IsDir: true, Children: []*entry.Entry{grandchild}}
+	child.Selected = true
+	grandchild.Selected = true // propagated, as SetSelected would do
+	sibling := &entry.Entry{Name: "sibling"}
+	unrelated := &entry.Entry{Name: "unrelated", Selected: true}
+
+	entries := []*entry.Entry{
+		{Name: "dir", IsDir: true, Children: []*entry.Entry{child, sibling}},
+		unrelated,
+	}
+
+	roots := selectedRoots(entries)
+
+	if len(roots) != 2 {
+		t.Fatalf("selectedRoots = %+v, want 2 roots (child and unrelated) — grandchild should not "+
+			"be returned separately since it's under an already-selected root", roots)
+	}
+	if roots[0] != child || roots[1] != unrelated {
+		t.Errorf("selectedRoots = %+v, want [child, unrelated] in that order", roots)
+	}
+}
+
+func TestSelectedRoots_EmptyWhenNothingSelected(t *testing.T) {
+	entries := []*entry.Entry{{Name: "a"}, {Name: "b", IsDir: true, Children: []*entry.Entry{{Name: "c"}}}}
+	if roots := selectedRoots(entries); len(roots) != 0 {
+		t.Errorf("selectedRoots = %+v, want empty", roots)
+	}
+}
+
+func TestBulkDelete_DeletesEverySelectedRoot(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	aPath := writeFile(t, leftRoot, "a.txt", "a\n")
+	bPath := writeFile(t, leftRoot, "b.txt", "b\n")
+	cPath := writeFile(t, leftRoot, "c.txt", "c\n")
+	a := &entry.Entry{Name: "a.txt", Left: &aPath, Selected: true}
+	b := &entry.Entry{Name: "b.txt", Left: &bPath, Selected: true}
+	c := &entry.Entry{Name: "c.txt", Left: &cPath} // not selected — should survive
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{a, b, c})
+	m.bulkDelete(selectedRoots(m.entries))
+
+	if _, err := os.Stat(aPath); !os.IsNotExist(err) {
+		t.Errorf("a.txt should be deleted, err=%v", err)
+	}
+	if _, err := os.Stat(bPath); !os.IsNotExist(err) {
+		t.Errorf("b.txt should be deleted, err=%v", err)
+	}
+	if _, err := os.Stat(cPath); err != nil {
+		t.Errorf("c.txt should survive (not selected): %v", err)
+	}
+	if len(m.entries) != 1 || m.entries[0] != c {
+		t.Fatalf("m.entries = %+v, want just c", m.entries)
+	}
+}
+
+func TestBulkCopy_CopiesEverySelectedRootWithSourcePresent(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	aPath := writeFile(t, leftRoot, "a.txt", "a\n")
+	a := &entry.Entry{Name: "a.txt", Left: &aPath, Selected: true}
+	b := &entry.Entry{Name: "b.txt", Selected: true} // left absent — should be skipped, not fail the batch
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{a, b})
+	m.bulkCopy(selectedRoots(m.entries), 'l', 'r')
+
+	wantDest := filepath.Join(rightRoot, "a.txt")
+	if a.Right == nil || *a.Right != wantDest {
+		t.Fatalf("a.Right = %v, want %q", a.Right, wantDest)
+	}
+	if b.Right != nil {
+		t.Errorf("b.Right should stay nil — its left side was absent, nothing to copy")
+	}
+	if m.flash != "" {
+		t.Errorf("flash = %q, want empty — at least one item (a) was copied", m.flash)
+	}
+}
+
+func TestBulkCopy_FlashesWhenNoSelectedItemHasSourceSide(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	a := &entry.Entry{Name: "a.txt", Selected: true} // left absent
+
+	m := newTestModel(2, leftRoot, "", rightRoot, []*entry.Entry{a})
+	m.bulkCopy(selectedRoots(m.entries), 'l', 'r')
+
+	if m.flash == "" {
+		t.Error("flash should explain that nothing was copied")
+	}
+}
+
 func TestCopyEntry_TwoWay_NewDestination(t *testing.T) {
 	leftRoot, rightRoot := t.TempDir(), t.TempDir()
 	leftPath := writeFile(t, leftRoot, "file.txt", "hello\n")

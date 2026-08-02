@@ -99,6 +99,33 @@ var (
 	styleHiddenError = lipgloss.NewStyle().
 				Background(lipgloss.Color("#35141a")).
 				Foreground(lipgloss.Color("245"))
+
+	// styleSelectedMarker: the `s`-key selection marker glyph. Its own
+	// isolated style, deliberately never aliased to or derived from an
+	// existing semantic style — an entry's diff-status color (unique/
+	// changed/error) stays untouched when it's selected; selection is a
+	// second, independent signal shown only in the marker slot. Black on
+	// yellow, decided 2026-08-02 (see memory/TODO.md Priority 2).
+	styleSelectedMarker = lipgloss.NewStyle().
+				Background(lipgloss.Color("226")).
+				Foreground(lipgloss.Color("0"))
+)
+
+// selectionGutterWidth is the fixed-width prefix rendered once per row,
+// reserved for the selection marker. Deliberately not per-column like the
+// tree arrow: selection is subtree-wide regardless of which side(s) an
+// entry appears on, so one marker per row is enough.
+const selectionGutterWidth = 2
+
+// selectionMarkerGlyphUnicode/ASCII: same split as the tree arrows
+// (collapsedArrowUnicode/ASCII below) and for the same reason — U+25CF is
+// in the Geometric Shapes block, "Ambiguous" East Asian Width like the
+// arrows, so some terminals render it two columns wide instead of one,
+// shifting the display. -A/--ascii falls back to a plain asterisk, which
+// has no such ambiguity.
+const (
+	selectionMarkerGlyphUnicode = "●"
+	selectionMarkerGlyphASCII   = "*"
 )
 
 // toolDoneMsg is sent when the external diff/merge tool exits. e is the
@@ -256,6 +283,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+		case "s":
+			if len(m.flat) > 0 {
+				e := m.flat[m.cursor]
+				if e.HasSelectedAncestor() {
+					m.flash = "Deselect the containing directory first"
+				} else {
+					e.SetSelected(!e.Selected)
+				}
+			}
+
+		case "esc":
+			// Clears the whole tree-wide selection in one press, regardless
+			// of cursor position — the counterpart to "s select" persisting
+			// across bulk operations (see beginCopy/handleCopyDestination):
+			// without this, getting out of a selection you're done with
+			// means walking to and re-toggling every root by hand.
+			for _, e := range selectedRoots(m.entries) {
+				e.SetSelected(false)
+			}
+
 		case "a":
 			m.beginCopy('a', 'l', "left", "Copy from A (left) to:")
 
@@ -275,6 +322,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// out of m.entries while the background scan may still be
 				// concurrently reading the tree it's part of.
 				m.flash = "Still comparing — please wait"
+			} else if roots := selectedRoots(m.entries); len(roots) > 0 {
+				m.bulkDelete(roots)
 			} else if len(m.flat) > 0 {
 				m.deleteEntry(m.flat[m.cursor])
 			}
@@ -348,6 +397,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // Two-way mode has only one possible destination, so the copy runs
 // immediately. Three-way mode starts the two-step "copy from X to:"
 // prompt.
+//
+// When a selection exists (see selectedRoots), it takes priority over the
+// cursor item entirely — bulk copy acts on every selected root, and the
+// per-item "nothing on that side" check below doesn't apply up front
+// (bulkCopy skips individual items missing that side instead of failing
+// the whole operation; see its comment).
 func (m *Model) beginCopy(letter, side byte, label, prompt string) {
 	if m.readOnly {
 		m.flash = "Read-only mode (--read-only): copy is disabled"
@@ -368,6 +423,15 @@ func (m *Model) beginCopy(letter, side byte, label, prompt string) {
 		m.flash = "Still comparing — please wait"
 		return
 	}
+	if roots := selectedRoots(m.entries); len(roots) > 0 {
+		if m.ways == 2 {
+			m.bulkCopy(roots, side, twoWayDest(side))
+			return
+		}
+		m.pendingCopyFrom = letter
+		m.prompt = prompt
+		return
+	}
 	if len(m.flat) == 0 {
 		return
 	}
@@ -377,11 +441,7 @@ func (m *Model) beginCopy(letter, side byte, label, prompt string) {
 		return
 	}
 	if m.ways == 2 {
-		dest := byte('r')
-		if side == 'r' {
-			dest = 'l'
-		}
-		m.copyEntry(e, side, dest)
+		m.copyEntry(e, side, twoWayDest(side))
 		return
 	}
 	m.pendingCopyFrom = letter
@@ -392,7 +452,10 @@ func (m *Model) beginCopy(letter, side byte, label, prompt string) {
 // prompt ("Copy from A to:" → b or c). Any key other than one of the two
 // remaining columns cancels the prompt with a visible "Invalid choice"
 // message (matching Python's own wording here, which is fine as-is) rather
-// than silently doing nothing.
+// than silently doing nothing. If a selection existed when the prompt was
+// opened, it still does now — no other key handling runs while a prompt is
+// pending, so re-deriving it here is equivalent to snapshotting it at
+// beginCopy time.
 func (m Model) handleCopyDestination(key string) (tea.Model, tea.Cmd) {
 	fromLetter := m.pendingCopyFrom
 	m.pendingCopyFrom = 0
@@ -403,8 +466,16 @@ func (m Model) handleCopyDestination(key string) (tea.Model, tea.Cmd) {
 		toLetter = key[0]
 	}
 	valid := toLetter == 'a' || toLetter == 'b' || toLetter == 'c'
-	if valid && toLetter != fromLetter && len(m.flat) > 0 {
-		m.copyEntry(m.flat[m.cursor], copyLetterToSide(fromLetter), copyLetterToSide(toLetter))
+	if !valid || toLetter == fromLetter {
+		m.flash = "Invalid choice"
+		return m, nil
+	}
+
+	from, to := copyLetterToSide(fromLetter), copyLetterToSide(toLetter)
+	if roots := selectedRoots(m.entries); len(roots) > 0 {
+		m.bulkCopy(roots, from, to)
+	} else if len(m.flat) > 0 {
+		m.copyEntry(m.flat[m.cursor], from, to)
 	} else {
 		m.flash = "Invalid choice"
 	}
@@ -441,7 +512,9 @@ func (m Model) View() string {
 
 	var sb strings.Builder
 
-	// Header: each root in its own column.
+	// Header: a blank selection gutter (nothing to select on the header
+	// itself), then each root in its own column.
+	sb.WriteString(selectionGutter(nil, m.ascii))
 	headerStyles := make([]lipgloss.Style, len(m.roots()))
 	for i := range headerStyles {
 		headerStyles[i] = styleHeader
@@ -462,6 +535,7 @@ func (m Model) View() string {
 		if idx < len(m.flat) {
 			e = m.flat[idx]
 		}
+		sb.WriteString(selectionGutter(e, m.ascii))
 		for i := range texts {
 			if i > 0 {
 				sb.WriteString(separatorStyle(styles[i-1], styles[i]).Render("|"))
@@ -476,8 +550,17 @@ func (m Model) View() string {
 	if m.comparing {
 		comparing = "  comparing..."
 	}
-	status := fmt.Sprintf(" %d/%d%s  q quit  ←→/enter collapse  ↑↓/jk move  PgUp/PgDn scroll  a/b/d copy/del",
-		m.cursor+1, len(m.flat), comparing)
+	selected := ""
+	// Shown regardless of scroll position — selection is tree-wide, so a
+	// selected item can easily be scrolled out of view. Without this, "d"
+	// (or "a"/"b"/"c") could bulk-act on a forgotten selection somewhere
+	// else in the tree while looking, from the cursor's row alone, like an
+	// ordinary single-item action.
+	if n := len(selectedRoots(m.entries)); n > 0 {
+		selected = fmt.Sprintf("  %d selected (esc clear)", n)
+	}
+	status := fmt.Sprintf(" %d/%d%s%s  q quit  ←→/enter collapse  ↑↓/jk move  PgUp/PgDn scroll  s select  a/b/d copy/del",
+		m.cursor+1, len(m.flat), comparing, selected)
 	switch {
 	case m.prompt != "":
 		status = " " + m.prompt
@@ -668,6 +751,23 @@ func renderCell(text string, width int, style lipgloss.Style, e *entry.Entry, as
 	return style.Render(indent) + arrowStyle.Render(arrow) + style.Render(rest)
 }
 
+// selectionGutter renders the fixed-width selection marker slot at the
+// very start of a row: the marker glyph (styleSelectedMarker) for a
+// selected entry, or blank space otherwise. e is nil for the header row
+// and for filler rows past the end of m.flat, both of which just get
+// blank space. ascii selects the ASCII marker fallback, matching the tree
+// arrows' -A/--ascii convention.
+func selectionGutter(e *entry.Entry, ascii bool) string {
+	if e != nil && e.Selected {
+		glyph := selectionMarkerGlyphUnicode
+		if ascii {
+			glyph = selectionMarkerGlyphASCII
+		}
+		return styleSelectedMarker.Render(glyph) + " "
+	}
+	return strings.Repeat(" ", selectionGutterWidth)
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func (m Model) viewHeight() int {
@@ -679,10 +779,12 @@ func (m Model) viewHeight() int {
 }
 
 // colWidths distributes the terminal width evenly across m.ways columns,
-// giving any remainder to the leftmost columns.
+// giving any remainder to the leftmost columns. Reserves
+// selectionGutterWidth off the top for the selection marker gutter, which
+// View renders before column 0 on every row.
 func (m Model) colWidths() []int {
 	seps := m.ways - 1
-	total := m.width - seps
+	total := m.width - seps - selectionGutterWidth
 	if total < m.ways {
 		total = m.ways
 	}

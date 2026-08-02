@@ -169,6 +169,50 @@ The entry is absent from at least one side.
 Columns where it is present are highlighted green; absent columns are
 blank.
 .El
+.Ss Selection
+Pressing
+.Ic s
+.Pq see Sx KEY BINDINGS
+toggles selection on the entry at the cursor, propagating to its whole
+subtree.
+A selected entry is marked with a one-character glyph, black text on a
+yellow background, in a one-character gutter to the left of the tree
+symbols: by default the Unicode
+.Sy ●
+.Pq Fl -ascii No falls back to Sy * .
+The marker reflects selection only; the entry's own color
+.Pq white/blue/green/red
+is left unchanged, so a selected entry's diff status is still visible.
+The gutter shows the marker once per row, not once per column, since
+selection applies to the whole entry regardless of how many sides it
+exists on.
+.Pp
+Selection is tree-wide: when one or more entries are selected,
+.Ic a , b , c ,
+and
+.Ic d
+act on every selected entry instead of just the one at the cursor
+.Pq see Sx KEY BINDINGS .
+The status bar shows a
+.Dq Ar N No selected
+count whenever the selection is non-empty, since a selected entry can be
+scrolled out of view.
+The selection is not cleared by a bulk copy — this lets the same
+selection be copied to a second destination in three-way mode without
+reselecting; press
+.Ic Esc
+to clear it explicitly when you're done with it.
+.Pp
+Selecting or deselecting a directory always applies to
+.Em all
+of its current descendants, with no exceptions: a directory's selected
+state can never lie about what is underneath it.
+Consequently, toggling
+.Ic s
+on an entry whose ancestor is already selected is a no-op — a status-bar
+message explains that the containing directory must be deselected first.
+To select all but one entry in a directory, deselect the directory and
+select the other entries individually.
 .Pp
 A hidden entry
 .Po
@@ -319,8 +363,22 @@ or
 .Pp
 The entry is automatically re-compared when the tool exits, in case it
 was edited.
+.It Ic s
+Toggle selection on the entry at the cursor, propagating to its whole
+subtree
+.Pq see Sx Selection under Sx DISPLAY .
+When one or more entries are selected,
+.Ic a , b , c ,
+and
+.Ic d
+below act on the whole selection instead of just the entry at the
+cursor.
+.It Ic Esc
+Clear the whole selection, tree-wide, regardless of cursor position.
+Selection otherwise persists after a bulk copy, so this is the way to
+deliberately start over once you're done with it.
 .It Ic a
-In two-way mode, copy the entry at the cursor from
+With no selection, in two-way mode, copy the entry at the cursor from
 .Ar left
 to
 .Ar right .
@@ -336,8 +394,13 @@ or
 to copy to
 .Ar parent .
 Any other key cancels.
+.Pp
+With a selection, the same two-way/three-way behavior applies to every
+selected entry instead of the cursor entry; an entry in the selection
+that is absent on the source side is silently skipped rather than
+aborting the whole operation.
 .It Ic b
-In two-way mode, copy the entry at the cursor from
+With no selection, in two-way mode, copy the entry at the cursor from
 .Ar right
 to
 .Ar left .
@@ -353,6 +416,11 @@ or
 to copy to
 .Ar parent .
 Any other key cancels.
+.Pp
+With a selection, acts on every selected entry instead of the cursor
+entry, same as
+.Ic a
+above.
 .It Ic c
 Three-way mode only.
 Prompts
@@ -366,6 +434,10 @@ or
 to copy to
 .Ar right .
 Any other key cancels.
+With a selection, acts on every selected entry instead of the cursor
+entry, same as
+.Ic a
+above.
 .Pp
 For
 .Ic a , b ,
@@ -375,8 +447,10 @@ copying onto a destination that already exists replaces it outright
 (an existing destination directory is removed first, rather than merged
 into); there is no confirmation prompt.
 .It Ic d
-Delete the entry at the cursor from every side on which it exists.
-There is no confirmation prompt.
+With no selection, delete the entry at the cursor from every side on
+which it exists.
+With a selection, delete every selected entry instead.
+There is no confirmation prompt either way.
 .It Ic r
 Re-enumerate the entry at the cursor from disk
 .Pq directories only; a file has nothing to enumerate

@@ -359,6 +359,67 @@ func TestSetHidden_DescendantCanBeUnhiddenIndependently(t *testing.T) {
 	}
 }
 
+func TestSetSelected_PropagatesToWholeSubtree(t *testing.T) {
+	child := &Entry{Name: "child"}
+	grandchild := &Entry{Name: "grandchild"}
+	child.Children = []*Entry{grandchild}
+	root := &Entry{Name: "root", IsDir: true, Children: []*Entry{child}}
+
+	root.SetSelected(true)
+
+	if !root.Selected || !child.Selected || !grandchild.Selected {
+		t.Fatalf("SetSelected(true) didn't reach whole subtree: root=%v child=%v grandchild=%v",
+			root.Selected, child.Selected, grandchild.Selected)
+	}
+
+	root.SetSelected(false)
+
+	if root.Selected || child.Selected || grandchild.Selected {
+		t.Fatalf("SetSelected(false) didn't clear whole subtree: root=%v child=%v grandchild=%v",
+			root.Selected, child.Selected, grandchild.Selected)
+	}
+}
+
+func TestHasSelectedAncestor_TrueForDescendantOfSelectedDir(t *testing.T) {
+	child := &Entry{Name: "child"}
+	grandchild := &Entry{Name: "grandchild"}
+	child.Children = []*Entry{grandchild}
+	root := &Entry{Name: "root", IsDir: true, Children: []*Entry{child}}
+	grandchild.Parent = child
+	child.Parent = root
+
+	root.SetSelected(true)
+
+	if !child.HasSelectedAncestor() {
+		t.Error("child.HasSelectedAncestor() = false, want true (root is selected)")
+	}
+	if !grandchild.HasSelectedAncestor() {
+		t.Error("grandchild.HasSelectedAncestor() = false, want true (root is selected)")
+	}
+}
+
+func TestHasSelectedAncestor_FalseForSelfSelection(t *testing.T) {
+	root := &Entry{Name: "root", IsDir: true, Selected: true}
+	if root.HasSelectedAncestor() {
+		t.Error("root.HasSelectedAncestor() = true, want false (only checks ancestors, not self)")
+	}
+}
+
+func TestHasSelectedAncestor_FalseForUnselectedSiblingSubtree(t *testing.T) {
+	selectedChild := &Entry{Name: "selected"}
+	plainChild := &Entry{Name: "plain"}
+	root := &Entry{Name: "root", IsDir: true, Children: []*Entry{selectedChild, plainChild}}
+	selectedChild.Parent = root
+	plainChild.Parent = root
+
+	selectedChild.Selected = true
+
+	if plainChild.HasSelectedAncestor() {
+		t.Error("plainChild.HasSelectedAncestor() = true, want false — its own ancestor (root) isn't " +
+			"selected, and a sibling's selection shouldn't leak across")
+	}
+}
+
 func TestFlatten_SkipOmitsEntryButStillDescendsIntoChildren(t *testing.T) {
 	// A directory whose Hidden flag wasn't propagated to one child (as if
 	// that child was independently un-hidden after the fact): the

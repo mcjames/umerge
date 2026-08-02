@@ -46,6 +46,63 @@ func setSide(e *entry.Entry, side byte, path string) {
 	}
 }
 
+// twoWayDest returns the other side in two-way mode — the implicit copy
+// destination for `a`/`b`, since there's only one place a copy can go.
+func twoWayDest(side byte) byte {
+	if side == 'r' {
+		return 'l'
+	}
+	return 'r'
+}
+
+// selectedRoots returns the maximal selected subtrees in entries: every
+// node with Selected set, without descending into its children. The
+// no-holes invariant (see entry.Entry.HasSelectedAncestor and TODO.md
+// Priority 2) guarantees a selected node's whole subtree is uniformly
+// selected too, so nothing beneath it needs separate handling — bulk
+// delete/copy can treat each returned root as one unit.
+func selectedRoots(entries []*entry.Entry) []*entry.Entry {
+	var out []*entry.Entry
+	for _, e := range entries {
+		if e.Selected {
+			out = append(out, e)
+			continue
+		}
+		out = append(out, selectedRoots(e.Children)...)
+	}
+	return out
+}
+
+// bulkDelete deletes every selected maximal subtree. Each deleteEntry call
+// reports its own failure via m.flash; a later failure's message
+// overwrites an earlier one rather than accumulating — matching this
+// codebase's existing single-item error handling instead of adding new
+// aggregate-reporting machinery for the bulk case.
+func (m *Model) bulkDelete(roots []*entry.Entry) {
+	for _, e := range roots {
+		m.deleteEntry(e)
+	}
+}
+
+// bulkCopy runs copyEntry for every selected root that has content on
+// side "from", silently skipping ones that don't — the bulk equivalent of
+// beginCopy's single-item "absent source" check, just applied per item so
+// one item in the selection lacking that side doesn't abort the whole
+// operation. Flashes only if the entire selection had nothing to copy.
+func (m *Model) bulkCopy(roots []*entry.Entry, from, to byte) {
+	copied := 0
+	for _, e := range roots {
+		if getSide(e, from) == nil {
+			continue
+		}
+		m.copyEntry(e, from, to)
+		copied++
+	}
+	if copied == 0 {
+		m.flash = "Nothing to copy: selection has nothing on that side"
+	}
+}
+
 func (m Model) rootFor(side byte) string {
 	switch side {
 	case 'l':

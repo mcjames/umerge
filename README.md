@@ -35,6 +35,9 @@ own directory-diff mechanism.
   compared in the background so the UI stays responsive
 - Color-coded entries: unchanged, changed, present-on-some-sides-only, and
   error states
+- Select multiple entries (`s`, propagates to a directory's subtree) and
+  bulk-copy or bulk-delete the whole selection with the same `a`/`b`/`c`/`d`
+  keys used for a single entry
 - Copy files/directories between sides (`a`/`b` in two-way; a multi-step
   `a`/`b`/`c` prompt in three-way) and delete them, on whichever sides
   they exist
@@ -103,6 +106,8 @@ Key bindings (see `umerge --help` or `man umerge` for the full list):
 | `↑`/`↓`, `j`/`k` | move cursor |
 | `←`/`→` | collapse/expand a directory |
 | `Enter` | open the file in the configured diff/merge tool |
+| `s` | toggle selection on the entry at the cursor (propagates to its subtree) |
+| `Esc` | clear the whole selection, tree-wide |
 | `a` / `b` | copy left→right / right→left (two-way); start a copy-from prompt (three-way) |
 | `c` | three-way only: start a copy-from-parent prompt |
 | `d` | delete the entry on every side it exists |
@@ -110,6 +115,16 @@ Key bindings (see `umerge --help` or `man umerge` for the full list):
 | `h` | toggle the hidden flag on the entry at the cursor (and its subtree) |
 | `H` | toggle whether hidden entries are shown at all |
 | `q`, `Ctrl-C` | quit |
+
+When one or more entries are selected (`s`), `a`/`b`/`c`/`d` act on the whole
+selection instead of just the entry at the cursor — the status bar shows a
+`N selected` count as a reminder, since the selection is tree-wide and can be
+scrolled out of view. The selection persists after a bulk copy (so you can
+copy the same selection to a second destination in three-way mode without
+reselecting); `Esc` clears it in one press, from anywhere in the tree, when
+you're done with it. Selecting a directory whose ancestor is already
+selected is blocked (flashes a message) rather than creating a partial
+selection: deselect the ancestor first, then hand-pick the rest.
 
 `a`/`b`/`c`/`d` are disabled (with a status-bar message explaining why) when run with `-r`/`--read-only`.
 

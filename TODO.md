@@ -46,14 +46,6 @@ actual (working) functionality on a real, messy tree, plus what's already
 been shipped beyond it** — not "every enhancement idea in this file."
 
 **What's left before 1.0:**
-- **Priority 2 — Selection, core only.** `s` toggle (propagate down the
-  no-holes subtree), bulk `d`/`a`/`b`/3-way-copy acting on a selection.
-  **`S` (bulk-select-by-rule) is explicitly deferred, not a parity loss**:
-  checked Python's actual implementation (`Match3.selection_matches`
-  ignores both its arguments and hardcodes one answer; the controller only
-  wires up the `a`/absent branch, `u`/`c`/`i` just print a message and do
-  nothing) — Python's own bulk-select-by-rule doesn't work, so skipping it
-  ships the one part of Python's selection model that actually did.
 - **Priority 4 — 3-way merge workflow**, in full: `m`/`M`/`n`/`R`,
   resolution-status markers, the `diff3 -m`/conflict classifier.
 
@@ -64,6 +56,27 @@ been shipped beyond it** — not "every enhancement idea in this file."
   which is the bar here — see Priority 6.
 - Hidden items (Priority 3) — the third zero-implementation Python feature
   identified by the 2026-07-19 audit — shipped 2026-07-22.
+- **Selection, core only (Priority 2)** — shipped 2026-08-02: `s` toggle
+  (propagates down the no-holes subtree, blocked with a flash on a node
+  under an already-selected ancestor), bulk `d`/`a`/`b`/3-way-copy acting
+  on the selection when one exists (falling back to the cursor item when
+  it doesn't), selected-count shown in the status bar since the selection
+  is tree-wide and can scroll out of view, `Esc` clears the whole
+  selection in one press (the selection otherwise persists after a bulk
+  copy on purpose). Rendered as a black-on-yellow
+  marker (`●`, `*` under `-A`/`--ascii` — same split as the tree arrows,
+  since `●` is Ambiguous-width like they are) in its own gutter column
+  (see "Selection visual design" in memory) — deliberately not a recolor,
+  so a selected entry's diff-status color stays visible. **`S`
+  (bulk-select-by-rule) is still explicitly
+  deferred, not a parity loss**: checked Python's actual implementation
+  (`Match3.selection_matches` ignores both its arguments and hardcodes one
+  answer; the controller only wires up the `a`/absent branch, `u`/`c`/`i`
+  just print a message and do nothing) — Python's own bulk-select-by-rule
+  doesn't work, so skipping it ships the one part of Python's selection
+  model that actually did. The optional tri-state (empty/partial/full)
+  indicator on collapsed directories was also skipped — purely cosmetic,
+  nothing depends on it for correctness.
 
 **Explicitly deferred to post-1.0 (not gaps, decisions):** Priority 3b
 (focus-on-diffs mode — new idea, not a Python feature), Priority 5's
@@ -240,18 +253,48 @@ here:
 
 ---
 
-## Priority 2 — Selection
+## Priority 2 — Selection — ✅ DONE (2026-08-02)
 
 **Clean-room Go design — Python is inspiration only, not a spec.**
-`entry.Entry` currently has no `Selected` field at all, so this is
-unstarted at the data-model level. Promoted 2026-07-19 (re-scanned the
-Python source for feature parity gaps); redesigned from scratch
-2026-07-21 after finding real bugs in the Python reference (below);
-revised again same day after further thought about the holes design (see
-"Primary design" vs. "Fallback design" below) — the holes idea traded
-away a whole feature (bulk copy) for a UX gesture ("select all but X")
-judged less important than expected once actual usage patterns were
-considered.
+Promoted 2026-07-19 (re-scanned the Python source for feature parity
+gaps); redesigned from scratch 2026-07-21 after finding real bugs in the
+Python reference (below); revised again same day after further thought
+about the holes design (see "Primary design" vs. "Fallback design"
+below) — the holes idea traded away a whole feature (bulk copy) for a UX
+gesture ("select all but X") judged less important than expected once
+actual usage patterns were considered.
+
+**Done, following the primary (no-holes) design below exactly:**
+`Entry.Selected`, `Entry.SetSelected` (propagates down through
+`Children`, mirroring `SetHidden`), `Entry.HasSelectedAncestor` (walks
+`Parent`, used to block toggling a node under an already-selected
+ancestor — flashes "Deselect the containing directory first" instead of
+creating a hole). `s` toggles the cursor item's subtree.
+`internal/ui/ops.go`'s `selectedRoots` walks the tree top-down collecting
+maximal selected subtrees (stops recursing once it finds one, per the
+no-holes invariant); `bulkDelete`/`bulkCopy` apply the existing single-
+item `deleteEntry`/`copyEntry` to each. `d`/`a`/`b`/`c` (via `beginCopy`/
+`handleCopyDestination`) act on the selection when one exists, falling
+back to the cursor item otherwise; `bulkCopy` skips an individual
+selected item missing the source side rather than aborting the whole
+batch. Status bar shows `N selected` whenever the selection is non-empty
+(selection is tree-wide, so it can be scrolled out of view). Selection
+deliberately survives a bulk copy (so the same selection can be copied to
+a second destination in three-way mode without reselecting) — `Esc`
+clears the whole tree-wide selection in one press, added 2026-08-02 once
+this came up in real use, since there was otherwise no way to back out of
+a selection except re-toggling every root by hand. Rendering:
+see "Selection visual design" in memory — a black-on-yellow glyph (`●`
+by default, `*` under `-A`/`--ascii` — `●` is Ambiguous-width like the
+tree arrows, so it gets the same fallback) in its own gutter column
+(`selectionGutterWidth`/`selectionGutter` in `app.go`), not a recolor, so
+a selected entry's diff-status color stays visible; `colWidths` reserves
+the gutter's width off the top.
+
+**Skipped on purpose, not gaps:** `S` (bulk-select-by-rule) — Python's
+own implementation doesn't work (see below) — and the optional tri-state
+(empty/partial/full) indicator on collapsed directories, purely cosmetic
+and nothing depends on it for correctness.
 
 - `s` — toggle selection on current item; propagates the new value down
   to the whole subtree (selecting or deselecting a directory applies to
