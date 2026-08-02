@@ -1,6 +1,9 @@
 # umerge
 
 [![CI](https://github.com/mcjames/umerge/actions/workflows/ci.yml/badge.svg)](https://github.com/mcjames/umerge/actions/workflows/ci.yml)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/mcjames/umerge)](go.mod)
+[![Release](https://img.shields.io/github/v/release/mcjames/umerge)](https://github.com/mcjames/umerge/releases)
+[![License](https://img.shields.io/github/license/mcjames/umerge)](LICENSE)
 
 Unix merge tool: A terminal-native two-way and three-way directory diff and merge tool —
 and a drop-in `git difftool -d` backend.
