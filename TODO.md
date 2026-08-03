@@ -46,8 +46,15 @@ actual (working) functionality on a real, messy tree, plus what's already
 been shipped beyond it** — not "every enhancement idea in this file."
 
 **What's left before 1.0:**
-- **Priority 4 — 3-way merge workflow**, in full: `m`/`M`/`n`/`R`,
-  resolution-status markers, the `diff3 -m`/conflict classifier.
+- **Priority 3b — "focus on diffs" mode — pulled forward into 1.0 scope
+  2026-08-02**, reversing this file's earlier "explicitly deferred to
+  post-1.0" call (see below). Design was already fully worked out
+  2026-07-21 (see the Priority 3b section further down); nothing about
+  the design changed, only its sequencing. Motivation: an asciinema demo
+  comparing two huge trees (e.g. two Linux kernel checkouts) with only a
+  handful of real differences, as a "lightbulb moment" for people who
+  don't already understand why a directory-diff tool is useful —
+  needs focus mode to be worth recording.
 
 **Done, closing out this bar:**
 - **`git difftool -d` end-to-end** — ✅ manually verified 2026-07-23 by
@@ -77,9 +84,17 @@ been shipped beyond it** — not "every enhancement idea in this file."
   model that actually did. The optional tri-state (empty/partial/full)
   indicator on collapsed directories was also skipped — purely cosmetic,
   nothing depends on it for correctness.
+- **Priority 4 — 3-way merge workflow** — ✅ shipped 2026-08-03: `m`/`M`/
+  `n`/`R`, resolution-status markers, the `diff3 -m`/conflict classifier.
+  See the Priority 4 section below for the full write-up, including two
+  corrections to this file's own earlier design notes found while
+  implementing (a no-common-ancestor file auto-resolves on identical
+  content, matching Python's real behavior rather than this file's
+  original "always conflict" summary; directories in that same shape
+  recurse per-child instead of one blanket conflict, a deliberate
+  divergence from Python).
 
-**Explicitly deferred to post-1.0 (not gaps, decisions):** Priority 3b
-(focus-on-diffs mode — new idea, not a Python feature), Priority 5's
+**Explicitly deferred to post-1.0 (not gaps, decisions):** Priority 5's
 include/exclude filters and rename/move detection, Priority 6's Mercurial
 support and TUI file-manager hook docs, Priority 8's ediff color theming
 and generalized merge-tool config, Priority 9's `--colors` depth flag and
@@ -680,11 +695,108 @@ more layer:
 
 ---
 
-## Priority 4 — 3-way merge workflow
+## Priority 4 — 3-way merge workflow — ✅ DONE (2026-08-03)
 
 Ported from Python. Promoted 2026-07-19 (re-scanned the Python source for
 feature parity gaps) — `entry.Entry` currently has no resolution-status
 field, unstarted at the data-model level.
+
+**Done:** `entry.ResolutionStatus` (`entry.go`) with the six values in the
+table below, `Entry.Resolution`, and `Entry.SetResolution` (propagates
+down a subtree, mirroring `SetHidden`/`SetSelected`). `fileops.MergeThreeFiles`
+runs `diff3 -m` once and reads its exit code (0 = clean merge, 1 =
+conflict, verified empirically — see below) rather than the Python
+reference's two separate `diff3` invocations (`-x` to detect a conflict,
+then `-m` to actually produce it), since the second call's exit code
+already carries the same information the first one was computed for.
+`internal/ui/merge.go` holds the classifier
+(`mergeItem`/`mergeFileItem`/`mergeDirItem` and their per-case helpers)
+and the three entry points: `m` (`mergeCursorItem`, cursor only — see
+below), `M` (`mergeSelection`), `n` (`mergeAll`, applied to every
+top-level entry). `R` (`entry.SetResolution(ResolutionManual)` on the
+cursor subtree) is wired directly in `app.go`. All four are gated behind
+`m.ways == 3` and share `mergeGuardOK` (read-only and still-comparing
+checks, mirroring `beginCopy`'s guards — merge mutates the tree the same
+way copy does, racing the same background-comparison goroutine if
+allowed to run concurrently). Rendered as a one-character marker in its
+own gutter column (`resolutionGutter`/`resolutionGutterWidth` in
+`app.go`), 3-way mode only — green/yellow/red per the table, foreground-
+only on the default background since (unlike the selection marker) there
+is no row content underneath it to preserve.
+
+**`m`/`M` are two separate keys with two separate scopes, not one
+selection-aware key like `a`/`b`/`c`/`d`.** Checked against
+`Controller.py`: `m` merges the cursor item regardless of any active
+selection; `M` is supposed to merge the selection, but its underlying
+`Model3.merge_to_center_item`/`merge_to_center_selection` split shows
+`merge_to_center_selection` passes `item=None` down to
+`__merge_to_center_thread`, which explicitly does nothing for that case
+(`# FIXME ... vestigial code?`) — so Python's `M` is dead, exactly the
+same shape of bug Priority 2 found in `S` (bulk-select-by-rule). Unlike
+`S`, which was skipped because TODO.md's requirement for it was just
+"port whatever Python does" and Python's own version didn't work, `M`'s
+requirement here (act on the selection) is a real, independently-useful
+feature, so it's implemented properly rather than skipped — `mergeSelection`
+walks `selectedRoots` for real.
+
+**Found while implementing, not just designing: TODO.md's own "no shared
+ancestor → also just `c`" line (below) was wrong for files.** Checked
+`Model3.py`'s actual `__merge_file_item` (not just the shorthand summary
+here) before writing the Go version: when middle is absent and both left
+and right are present, Python auto-resolves — copies right over middle,
+marks `b` — whenever `lr_num_diffs == 0` (left and right are byte-
+identical), and only falls through to a conflict when they actually
+differ. Decided (with the user) to match this real behavior rather than
+the summary: an independently-added file auto-resolves on identical
+content, conflicts otherwise. Directories in the same shape get no such
+identical-content check in Python (no cheap way to prove two whole
+subtrees match) and are unconditionally `c` there — but the Go version
+deliberately diverges here too: instead of one blanket conflict for the
+whole subtree, it creates the middle directory and recurses into each
+child, so files deep inside that happen to be identical still auto-
+resolve and only the files that actually differ end up flagged. This
+isn't extra implementation cost — it falls out of the same per-child
+recursion the all-three-present directory case already needs, and
+`copyEntry`'s existing missing-parent-directory handling (Priority 1)
+means a child several levels deep can still be written into the newly-
+created middle directory without any additional plumbing.
+
+**"Delete/modify is a conflict" (below) only applies when there's an
+actual modification.** Implemented as: if the side that deleted matches
+what the surviving side has (i.e. the surviving side never touched it),
+the deletion is honored silently — delete middle too, no marker, since
+there's no real disagreement to flag. Only "one side edited it, the
+other deleted it" is the conflict. This wasn't spelled out explicitly in
+the original decision below, but follows directly from its own stated
+reasoning (modification implies real intent worth not discarding — there's
+no modification to protect if the surviving side is unchanged) and from
+the git analogy the decision itself cites (git calls this a
+"modify/delete conflict," not a "delete conflict" — modification is the
+necessary ingredient). Directories get no such content-equality check in
+this shape either (same "no cheap whole-subtree equality check"
+reasoning as above) — a directory delete/modify mismatch is
+unconditionally `c`.
+
+**`fileops.MergeThreeFiles`'s exit-code reliance verified empirically**
+against real `diff3 -m` output before relying on it: exit 0 for a clean
+non-overlapping merge, exit 1 with inline `<<<<<<<`/`=======`/`>>>>>>>`
+conflict markers on stdout for an overlapping one (the caller discards
+this output entirely rather than writing it to middle, per the "leave it
+byte-for-byte as-is" decision below), exit 2 for a real failure (e.g. a
+missing file).
+
+Verified with unit tests (`fileops_test.go`: `MergeThreeFiles`'s three
+exit-code paths; `ui/merge_test.go`: every classifier branch — all-three-
+present same/clean-merge/conflict/binary, one-sided add, uncontested
+deletion vs. modify/delete conflict, both-sides-deleted splice, no-
+common-ancestor identical/differing, the directory one-sided-add/
+modify-delete/no-common-ancestor-recursion cases, the `R` key, the read-
+only and still-comparing guards, and `M`/`n`'s selection/whole-tree
+scoping) plus live-pty smoke tests against the real compiled binary
+covering all of the above end-to-end, including the mixed-resolution
+directory case (parent left unresolved, one child auto-resolved, one
+child conflicted) and confirming the exact rendered SGR bytes for the
+green/yellow/red marker colors.
 
 ### Resolution status markers
 Each entry has a one-character resolution status prefix displayed at the
@@ -734,8 +846,13 @@ the tree:
 - All three present and changes *do* overlap (checked via `diff3 -x`
   first, separately from the actual merge) → **do nothing to the file.**
   Mark `c` (conflict), leave it byte-for-byte as-is. Red.
-- Same new file/dir appeared independently on both sides, no shared
-  ancestor → also just `c` — can't tell "same idea" from "coincidence."
+- Same new file appeared independently on both sides, no shared ancestor
+  → **corrected 2026-08-03, see the "Done" note above:** auto-resolves
+  when the two copies are byte-identical (matches Python's actual
+  behavior, not this line's original wording); only conflicts (`c`) when
+  they genuinely differ. Directories in the same shape recurse per-child
+  instead of one blanket `c` — a deliberate divergence from Python, see
+  above.
 
 **Important: umerge never builds its own conflict-resolution UI.** A `c`
 row has no in-app conflict-marker rendering or merge editor — the user
@@ -776,17 +893,17 @@ resolved (see the still-open question below). Also cheaper to detect than
 a real text conflict: pure presence-check (left/middle/right nil-ness) at
 compare time, no `diff3 -x`/`diff3 -m` subprocess needed for this case.
 
-### Still open: resolution-status marker doesn't auto-clear after a manual fix
-After hand-resolving a `c` in vimdiff and saving, Priority 7's
+### Decided: resolution-status marker doesn't auto-clear after a manual fix
+(2026-08-03) After hand-resolving a `c` in vimdiff and saving, the
 auto-recompare-on-exit updates the diff counts (0 diffs everywhere, looks
-fine) but the status letter stays `c` (red) until `R` is pressed — that's
-genuine Python behavior, not a bug, but worth deciding on purpose: keep
-the explicit `R` requirement (matches Python, no magic), or auto-promote
-to resolved when a post-edit recompare shows zero diffs on all three
-pairs (friendlier, but "the tool decided it's fine" is a bigger claim
-than "diffs are now zero"). No recommendation yet — flagging for a real
-decision before implementation. Same category as the delete/modify
-question above: don't silently replicate Python's behavior without
+fine) but the status letter stays `c` (red) until `R` is pressed —
+**decided to keep the explicit `R` requirement** (matches Python, no
+magic) over auto-promoting to resolved on a zero-diff recompare: "diffs
+are now zero" isn't the same claim as "this is resolved" (e.g. two
+independent edits that happen to converge byte-for-byte isn't
+necessarily an endorsement), and `R` is a clear, deliberate signal from
+the person who actually looked at it. Same category as the delete/modify
+decision above: don't silently replicate Python's behavior without
 deciding on purpose (see `feedback_python_not_sacred` in memory).
 
 ---

@@ -553,3 +553,69 @@ func TestFilesEqual_LargerThanChunkSize(t *testing.T) {
 		t.Errorf("filesEqual(a, c) = %v, %v; want false, nil (differ in the last byte, past several full chunks)", eq, err)
 	}
 }
+
+func TestMergeThreeFiles_NonOverlappingChangesMergeCleanly(t *testing.T) {
+	dir := t.TempDir()
+	left := writeFile(t, dir, "left.txt", "LEFT1\nline2\nline3\nline4\n")
+	middle := writeFile(t, dir, "middle.txt", "line1\nline2\nline3\nline4\n")
+	right := writeFile(t, dir, "right.txt", "line1\nline2\nline3\nRIGHT4\n")
+
+	merged, conflict, err := MergeThreeFiles(left, middle, right)
+	if err != nil {
+		t.Fatalf("MergeThreeFiles: %v", err)
+	}
+	if conflict {
+		t.Fatal("conflict = true, want false for non-overlapping changes")
+	}
+	want := "LEFT1\nline2\nline3\nRIGHT4\n"
+	if string(merged) != want {
+		t.Errorf("merged = %q, want %q", merged, want)
+	}
+}
+
+func TestMergeThreeFiles_OverlappingChangesConflict(t *testing.T) {
+	dir := t.TempDir()
+	left := writeFile(t, dir, "left.txt", "line1\nLEFT-CHANGE\nline3\n")
+	middle := writeFile(t, dir, "middle.txt", "line1\nline2\nline3\n")
+	right := writeFile(t, dir, "right.txt", "line1\nRIGHT-CHANGE\nline3\n")
+
+	merged, conflict, err := MergeThreeFiles(left, middle, right)
+	if err != nil {
+		t.Fatalf("MergeThreeFiles: %v", err)
+	}
+	if !conflict {
+		t.Fatal("conflict = false, want true for overlapping changes to the same line")
+	}
+	if merged != nil {
+		t.Errorf("merged = %q, want nil on conflict (caller leaves middle untouched)", merged)
+	}
+}
+
+func TestMergeThreeFiles_AllIdentical(t *testing.T) {
+	dir := t.TempDir()
+	left := writeFile(t, dir, "left.txt", "same\n")
+	middle := writeFile(t, dir, "middle.txt", "same\n")
+	right := writeFile(t, dir, "right.txt", "same\n")
+
+	merged, conflict, err := MergeThreeFiles(left, middle, right)
+	if err != nil {
+		t.Fatalf("MergeThreeFiles: %v", err)
+	}
+	if conflict {
+		t.Fatal("conflict = true, want false for identical files")
+	}
+	if string(merged) != "same\n" {
+		t.Errorf("merged = %q, want %q", merged, "same\n")
+	}
+}
+
+func TestMergeThreeFiles_RealErrorOnMissingFile(t *testing.T) {
+	dir := t.TempDir()
+	left := writeFile(t, dir, "left.txt", "content\n")
+	middle := writeFile(t, dir, "middle.txt", "content\n")
+
+	_, _, err := MergeThreeFiles(left, middle, filepath.Join(dir, "does-not-exist.txt"))
+	if err == nil {
+		t.Fatal("expected an error merging against a nonexistent file, got nil")
+	}
+}

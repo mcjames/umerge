@@ -245,3 +245,28 @@ func CompareThreeFiles(left, middle, right string) (lmDiffs, mrDiffs int, binary
 	}
 	return lmDiffs, mrDiffs, false, nil
 }
+
+// MergeThreeFiles runs `diff3 -m` on left/middle/right (middle acting as
+// the common ancestor) and reports whether the merge produced overlapping
+// conflicts. On a clean merge (no overlaps), merged holds the full merged
+// content, ready to be written over middle. On a conflicting merge,
+// merged is nil and conflict is true — the caller leaves middle
+// byte-for-byte untouched rather than writing diff3's conflict-marker
+// output (see TODO.md Priority 4: "do nothing to the file... leave it
+// byte-for-byte as-is").
+//
+// Just one subprocess call, unlike the Python reference (which runs
+// `diff3 -x` first purely to detect a conflict, then `diff3 -m` again to
+// actually produce it) — `diff3 -m`'s own exit code already distinguishes
+// the two cases (0 = clean merge, 1 = merged with conflict markers, exit
+// 2 = a real failure), verified empirically, so the check is redundant.
+func MergeThreeFiles(left, middle, right string) (merged []byte, conflict bool, err error) {
+	out, execErr := exec.Command("diff3", "-m", left, middle, right).Output()
+	if execErr == nil {
+		return out, false, nil
+	}
+	if exit, ok := execErr.(*exec.ExitError); ok && exit.ExitCode() == 1 {
+		return nil, true, nil
+	}
+	return nil, false, execErr
+}

@@ -98,6 +98,10 @@ Disable the copy
 .Pq Ic a , Ic b , Ic c
 and delete
 .Pq Ic d
+key bindings, plus the three-way merge
+.Pq Ic m , Ic M , Ic n
+and mark-resolved
+.Pq Ic R
 key bindings; only navigation, collapsing/expanding, and viewing in the
 configured diff/merge tool remain active.
 Intended for use as a
@@ -229,6 +233,40 @@ much darker, with medium-gray text
 The cursor row always looks the same regardless of whether the entry
 under it is hidden; move the cursor off an entry to see whether it is
 hidden.
+.Ss Resolution status
+In three-way mode, each entry carries a one-character resolution-status
+marker next to its name, tracking where it stands in the merge workflow
+.Pq see Sx KEY BINDINGS Ic m , Ic M , Ic n , Ic R :
+.Bl -tag -width "(blank)  "
+.It (blank)
+Unresolved: no merge action has been taken yet.
+Colored green.
+.It Ic a No / Sy b
+Resolved by copying
+.Ar left
+/
+.Ar right
+into
+.Ar parent .
+Colored green.
+.It Ic m
+Auto-merged cleanly with
+.Xr diff3 1 Ns 's
+.Fl m
+mode: the changes on both sides did not overlap.
+Colored yellow.
+.It Ic r
+Manually resolved: the user pressed
+.Ic R
+after fixing a conflict by hand.
+Colored yellow.
+.It Ic c
+Conflict: needs manual resolution.
+Colored red.
+.El
+A directory's own marker is left blank when its children have a mix of
+statuses, since no single character can honestly summarize that; expand
+it to see each child's own status.
 .Ss Diff counts
 Once a file comparison completes, a count is appended after the filename:
 .Bl -tag -width "= "
@@ -482,6 +520,39 @@ When on, hidden entries are rendered in a much darker shade of their
 usual color, with medium-gray text, rather than omitted
 .Pq e.g. a hidden-but-changed entry still shows blue, just a dark navy
 instead of its usual pale blue .
+.It Ic m
+Three-way mode only.
+Auto-merge the entry at the cursor into
+.Ar parent ,
+regardless of any active selection
+.Po
+unlike
+.Ic a , b , c , d ,
+this is not selection-aware; use
+.Ic M
+for the selection
+.Pc .
+See
+.Sx Resolution status
+under
+.Sx DISPLAY
+for the classifier this applies.
+.It Ic M
+Three-way mode only.
+Auto-merge every selected entry into
+.Ar parent .
+Flashes a message if nothing is selected.
+.It Ic n
+Three-way mode only.
+Auto-merge the entire tree into
+.Ar parent
+in one keystroke, regardless of cursor position or selection.
+.It Ic R
+Three-way mode only.
+Mark the entry at the cursor's whole subtree as resolved
+.Pq status Ic r .
+Does not itself re-run any comparison or merge; use after resolving a
+conflict by hand in the diff/merge tool.
 .It Ic q , Ctrl-C
 Quit
 .Nm .
@@ -550,7 +621,8 @@ would follow it and genuinely overwrite the real working-tree file — with
 no visual indication that anything outside the temporary diff session was
 touched.
 .Fl -read-only
-disables all four so the git integration is a safe viewer by default.
+disables all of these (plus the three-way merge and mark-resolved key
+bindings) so the git integration is a safe viewer by default.
 .Sh EXIT STATUS
 .Ex -std
 .Sh SEE ALSO

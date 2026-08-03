@@ -20,6 +20,28 @@ const (
 	BinaryDifferent
 )
 
+// ResolutionStatus is the 3-way merge workflow's per-entry status marker
+// (TODO.md Priority 4). The zero value, ResolutionUnresolved, displays as
+// ' ' — matching the Python reference's default.
+type ResolutionStatus byte
+
+const (
+	ResolutionUnresolved ResolutionStatus = 0   // displayed as ' '; not yet addressed
+	ResolutionTookLeft   ResolutionStatus = 'a' // resolved by copying left to middle
+	ResolutionTookRight  ResolutionStatus = 'b' // resolved by copying right to middle
+	ResolutionMerged     ResolutionStatus = 'm' // auto-merged via diff3 -m, no overlaps
+	ResolutionManual     ResolutionStatus = 'r' // user pressed R after resolving by hand
+	ResolutionConflict   ResolutionStatus = 'c' // needs manual resolution
+)
+
+// Char returns the one-character display form of r.
+func (r ResolutionStatus) Char() byte {
+	if r == ResolutionUnresolved {
+		return ' '
+	}
+	return byte(r)
+}
+
 // Entry is one node in the merged directory tree.
 // Left, Middle, Right are nil when the file is absent on that side.
 // Middle is always nil in two-way mode.
@@ -55,6 +77,15 @@ type Entry struct {
 	// subtree is selected," enforced by callers via HasSelectedAncestor
 	// rather than by anything in this struct.
 	Selected bool
+
+	// Resolution is the 3-way merge workflow's status marker (TODO.md
+	// Priority 4), set by the merge classifier or by the user pressing R.
+	// Unlike Hidden/Selected it is not user-toggled per entry directly —
+	// SetResolution below still propagates it down a subtree, mirroring
+	// the Python reference's set_resolution_status_of_tree, for the cases
+	// that assign one status to a whole resolved/copied subtree at once
+	// (e.g. a one-sided directory add copied wholesale).
+	Resolution ResolutionStatus
 }
 
 // BuildPair constructs a merged tree for a two-way comparison. ig may be nil
@@ -201,6 +232,17 @@ func (e *Entry) SetSelected(value bool) {
 	e.Selected = value
 	for _, c := range e.Children {
 		c.SetSelected(value)
+	}
+}
+
+// SetResolution sets Resolution on e and every descendant to value,
+// mirroring the Python reference's set_resolution_status_of_tree — used
+// when one merge decision resolves a whole subtree at once (e.g. copying
+// an entire one-sided directory add into middle).
+func (e *Entry) SetResolution(value ResolutionStatus) {
+	e.Resolution = value
+	for _, c := range e.Children {
+		c.SetResolution(value)
 	}
 }
 

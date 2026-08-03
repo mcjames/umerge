@@ -41,6 +41,11 @@ own directory-diff mechanism.
 - Select multiple entries (`s`, propagates to a directory's subtree) and
   bulk-copy or bulk-delete the whole selection with the same `a`/`b`/`c`/`d`
   keys used for a single entry
+- Three-way merge workflow: auto-merge an entry (`m`), the selection (`M`),
+  or the whole tree (`n`) into the middle via `diff3 -m`, with a
+  per-entry resolution-status marker (unresolved/took-a-side/
+  auto-merged/manually-resolved/conflict) and `R` to mark something
+  resolved by hand
 - Copy files/directories between sides (`a`/`b` in two-way; a multi-step
   `a`/`b`/`c` prompt in three-way) and delete them, on whichever sides
   they exist
@@ -117,6 +122,10 @@ Key bindings (see `umerge --help` or `man umerge` for the full list):
 | `r` | re-enumerate and re-compare the entry at the cursor, in the background |
 | `h` | toggle the hidden flag on the entry at the cursor (and its subtree) |
 | `H` | toggle whether hidden entries are shown at all |
+| `m` | three-way only: auto-merge the entry at the cursor into the middle |
+| `M` | three-way only: auto-merge every selected entry into the middle |
+| `n` | three-way only: auto-merge the entire tree into the middle in one keystroke |
+| `R` | three-way only: mark the entry at the cursor's subtree as resolved |
 | `q`, `Ctrl-C` | quit |
 
 When one or more entries are selected (`s`), `a`/`b`/`c`/`d` act on the whole
@@ -130,6 +139,38 @@ selected is blocked (flashes a message) rather than creating a partial
 selection: deselect the ancestor first, then hand-pick the rest.
 
 `a`/`b`/`c`/`d` are disabled (with a status-bar message explaining why) when run with `-r`/`--read-only`.
+
+### Three-way merge
+
+In three-way mode, each entry carries a one-character resolution status
+next to its name, showing where it stands in the merge:
+
+| Char | Meaning | Color |
+|------|---------|-------|
+| (blank) | unresolved — no action taken yet | green |
+| `a` / `b` | resolved by copying left / right into the middle | green |
+| `m` | auto-merged cleanly with `diff3 -m`, no overlaps | yellow |
+| `r` | manually resolved (marked with `R` after fixing it by hand) | yellow |
+| `c` | conflict — needs manual resolution | red |
+
+`m` auto-merges just the entry at the cursor into the middle; `M` does the
+same for every selected entry; `n` auto-merges the whole tree in one
+keystroke. The classifier: an entry added on only one side is copied in
+and marked `a`/`b`; one side unchanged and the other deleted is honored
+silently (no marker); one side *modified* and the other deleted is left as
+a conflict (`c`) rather than silently picking a side, since there's no way
+to reconcile "here's an edit" with "delete this" without asking; an entry
+added independently on both sides with no common ancestor auto-resolves
+when the two copies are byte-identical, otherwise conflicts; and an entry
+present on all three sides merges cleanly via `diff3 -m` when the changes
+don't overlap, or conflicts (leaving the file untouched) when they do.
+umerge never builds its own conflict-resolution UI for a `c` entry — press
+`Enter` to open it in `vimdiff`/`ediff`, resolve it by hand, save, and
+press `R` to mark the subtree resolved once you're satisfied (it doesn't
+auto-clear on its own, even if a save happens to zero out the diff count).
+
+`m`/`M`/`n`/`R` are disabled (with a status-bar message explaining why)
+when run with `-r`/`--read-only`.
 
 By default, entries matched by a top-level `.gitignore` in any compared
 root are skipped (along with `.git` itself, always). This only reads the
@@ -166,9 +207,6 @@ so the git integration is a safe viewer by default.
 
 Development is tracked in [`TODO.md`](TODO.md); in planned order:
 
-- Selection and bulk operations
-- The full three-way merge workflow (`diff3`-based auto-merge, resolution
-  tracking, plus an `n` key to merge the entire tree in one keystroke)
 - Wildcard/regex include/exclude filters, plus options to ignore
   whitespace/case/blank-line-only diffs when comparing file contents
 - Nested per-directory `.gitignore` support (currently only the top-level

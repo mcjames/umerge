@@ -475,3 +475,36 @@ func TestBuildPair_EmptyDirOnOneSide(t *testing.T) {
 		t.Errorf("emptydir should have no children, got %+v", e.Children)
 	}
 }
+
+func TestSetResolution_PropagatesToWholeSubtree(t *testing.T) {
+	child := &Entry{Name: "child"}
+	grandchild := &Entry{Name: "grandchild"}
+	child.Children = []*Entry{grandchild}
+	root := &Entry{Name: "root", IsDir: true, Children: []*Entry{child}}
+
+	root.SetResolution(ResolutionTookLeft)
+
+	if root.Resolution != ResolutionTookLeft || child.Resolution != ResolutionTookLeft || grandchild.Resolution != ResolutionTookLeft {
+		t.Fatalf("SetResolution didn't reach whole subtree: root=%v child=%v grandchild=%v",
+			root.Resolution, child.Resolution, grandchild.Resolution)
+	}
+}
+
+func TestResolutionStatus_Char(t *testing.T) {
+	cases := []struct {
+		status ResolutionStatus
+		want   byte
+	}{
+		{ResolutionUnresolved, ' '},
+		{ResolutionTookLeft, 'a'},
+		{ResolutionTookRight, 'b'},
+		{ResolutionMerged, 'm'},
+		{ResolutionManual, 'r'},
+		{ResolutionConflict, 'c'},
+	}
+	for _, c := range cases {
+		if got := c.status.Char(); got != c.want {
+			t.Errorf("ResolutionStatus(%v).Char() = %q, want %q", c.status, got, c.want)
+		}
+	}
+}

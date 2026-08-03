@@ -109,6 +109,23 @@ var (
 	styleSelectedMarker = lipgloss.NewStyle().
 				Background(lipgloss.Color("226")).
 				Foreground(lipgloss.Color("0"))
+
+	// Resolution-status marker colors (TODO.md Priority 4), matching the
+	// Python reference's marker_ok/marker_merged/marker_resolved/
+	// marker_conflict: unresolved/took-left/took-right read as "fine, no
+	// action needed" (green); auto-merged/manually-resolved both read as
+	// "touched, worth a glance" (yellow); conflict reads as "needs you"
+	// (red). Foreground-only on the default background, unlike the
+	// selection marker — this sits in its own gutter column too, so
+	// there's no row content underneath it to preserve.
+	styleResolutionOK = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("10"))
+
+	styleResolutionMerged = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("226"))
+
+	styleResolutionConflict = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("196"))
 )
 
 // selectionGutterWidth is the fixed-width prefix rendered once per row,
@@ -127,6 +144,12 @@ const (
 	selectionMarkerGlyphUnicode = "●"
 	selectionMarkerGlyphASCII   = "*"
 )
+
+// resolutionGutterWidth is the fixed-width prefix reserved for the
+// 3-way merge resolution-status marker (TODO.md Priority 4) — one
+// character plus a trailing space, same shape as the selection gutter.
+// Only rendered in 3-way mode; 2-way has no resolution concept at all.
+const resolutionGutterWidth = 2
 
 // toolDoneMsg is sent when the external diff/merge tool exits. e is the
 // entry that was open in the tool, so it can be re-compared — the file
@@ -312,6 +335,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "c":
 			if m.ways == 3 {
 				m.beginCopy('c', 'm', "middle", "Copy from C (middle) to:")
+			}
+
+		case "m":
+			if m.ways == 3 {
+				m.mergeCursorItem()
+			}
+
+		case "M":
+			if m.ways == 3 {
+				m.mergeSelection()
+			}
+
+		case "n":
+			if m.ways == 3 {
+				m.mergeAll()
+			}
+
+		case "R":
+			if m.ways == 3 {
+				if m.readOnly {
+					m.flash = "Read-only mode (--read-only): mark-resolved is disabled"
+				} else if len(m.flat) > 0 {
+					m.flat[m.cursor].SetResolution(entry.ResolutionManual)
+				}
 			}
 
 		case "d":
@@ -512,9 +559,10 @@ func (m Model) View() string {
 
 	var sb strings.Builder
 
-	// Header: a blank selection gutter (nothing to select on the header
-	// itself), then each root in its own column.
+	// Header: blank selection and resolution gutters (nothing to select
+	// or resolve on the header itself), then each root in its own column.
 	sb.WriteString(selectionGutter(nil, m.ascii))
+	sb.WriteString(resolutionGutter(nil, m.ways))
 	headerStyles := make([]lipgloss.Style, len(m.roots()))
 	for i := range headerStyles {
 		headerStyles[i] = styleHeader
@@ -536,6 +584,7 @@ func (m Model) View() string {
 			e = m.flat[idx]
 		}
 		sb.WriteString(selectionGutter(e, m.ascii))
+		sb.WriteString(resolutionGutter(e, m.ways))
 		for i := range texts {
 			if i > 0 {
 				sb.WriteString(separatorStyle(styles[i-1], styles[i]).Render("|"))
@@ -559,8 +608,12 @@ func (m Model) View() string {
 	if n := len(selectedRoots(m.entries)); n > 0 {
 		selected = fmt.Sprintf("  %d selected (esc clear)", n)
 	}
-	status := fmt.Sprintf(" %d/%d%s%s  q quit  ←→/enter collapse  ↑↓/jk move  PgUp/PgDn scroll  s select  a/b/d copy/del",
-		m.cursor+1, len(m.flat), comparing, selected)
+	hints := "q quit  ←→/enter collapse  ↑↓/jk move  PgUp/PgDn scroll  s select  a/b/d copy/del"
+	if m.ways == 3 {
+		hints += "  m/M/n merge  R resolved"
+	}
+	status := fmt.Sprintf(" %d/%d%s%s  %s",
+		m.cursor+1, len(m.flat), comparing, selected, hints)
 	switch {
 	case m.prompt != "":
 		status = " " + m.prompt
@@ -768,6 +821,36 @@ func selectionGutter(e *entry.Entry, ascii bool) string {
 	return strings.Repeat(" ", selectionGutterWidth)
 }
 
+// resolutionGutter renders the fixed-width resolution-status marker slot
+// (TODO.md Priority 4), immediately after the selection gutter: the
+// status character in its category color for a 3-way entry, or blank
+// space in 2-way mode (no resolution concept there) or for the header/
+// filler rows, where e is nil.
+func resolutionGutter(e *entry.Entry, ways int) string {
+	if ways != 3 || e == nil {
+		return strings.Repeat(" ", resolutionGutterWidth)
+	}
+	style := styleResolutionOK
+	switch e.Resolution {
+	case entry.ResolutionMerged, entry.ResolutionManual:
+		style = styleResolutionMerged
+	case entry.ResolutionConflict:
+		style = styleResolutionConflict
+	}
+	return style.Render(string(e.Resolution.Char())) + " "
+}
+
+// resolutionGutterWidth reports how much horizontal space the resolution
+// gutter actually occupies for this model — colWidths needs to reserve
+// it in 3-way mode and not in 2-way, where the gutter itself renders as
+// nothing extra beyond what's already blank.
+func (m Model) resolutionGutterWidth() int {
+	if m.ways == 3 {
+		return resolutionGutterWidth
+	}
+	return 0
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func (m Model) viewHeight() int {
@@ -784,7 +867,7 @@ func (m Model) viewHeight() int {
 // View renders before column 0 on every row.
 func (m Model) colWidths() []int {
 	seps := m.ways - 1
-	total := m.width - seps - selectionGutterWidth
+	total := m.width - seps - selectionGutterWidth - m.resolutionGutterWidth()
 	if total < m.ways {
 		total = m.ways
 	}
