@@ -45,16 +45,15 @@ perpetually-pre-1.0 hobby project. Bar: **match the Python original's
 actual (working) functionality on a real, messy tree, plus what's already
 been shipped beyond it** — not "every enhancement idea in this file."
 
-**What's left before 1.0:**
-- **Priority 3b — "focus on diffs" mode — pulled forward into 1.0 scope
-  2026-08-02**, reversing this file's earlier "explicitly deferred to
-  post-1.0" call (see below). Design was already fully worked out
-  2026-07-21 (see the Priority 3b section further down); nothing about
-  the design changed, only its sequencing. Motivation: an asciinema demo
-  comparing two huge trees (e.g. two Linux kernel checkouts) with only a
-  handful of real differences, as a "lightbulb moment" for people who
-  don't already understand why a directory-diff tool is useful —
-  needs focus mode to be worth recording.
+**What's left before 1.0: nothing — this bar is fully closed as of
+2026-08-03.** The last two items were Priority 4 (3-way merge) and
+Priority 3b (focus mode, pulled forward into 1.0 scope 2026-08-02,
+reversing this file's earlier "explicitly deferred to post-1.0" call —
+motivation: an asciinema demo comparing two huge trees, e.g. two Linux
+kernel checkouts, with only a handful of real differences, as a
+"lightbulb moment" for people who don't already understand why a
+directory-diff tool is useful, needs focus mode to be worth recording).
+Both shipped same week, see their own entries below.
 
 **Done, closing out this bar:**
 - **`git difftool -d` end-to-end** — ✅ manually verified 2026-07-23 by
@@ -93,6 +92,16 @@ been shipped beyond it** — not "every enhancement idea in this file."
   original "always conflict" summary; directories in that same shape
   recurse per-child instead of one blanket conflict, a deliberate
   divergence from Python).
+- **Priority 3b — "focus on diffs" mode** — ✅ shipped 2026-08-03: `f`
+  toggles auto-collapse of confirmed-clean directories to one dimmed
+  line, `t` toggles a live clean/pending/differ status-line summary. See
+  the Priority 3b section below for the full write-up, including a
+  correction to this file's own design notes found while implementing
+  (exact per-subtree counts instead of the originally-proposed dirty
+  bool-with-early-exit, since the status line needs a real count and a
+  count can't early-exit the way a bool can — the walk this triggers
+  turned out to be depth-bounded anyway, not the O(n) cost the early-exit
+  was guarding against, so nothing was actually given up).
 
 **Explicitly deferred to post-1.0 (not gaps, decisions):** Priority 5's
 include/exclude filters and rename/move detection, Priority 6's Mercurial
@@ -574,7 +583,115 @@ the dark-shade-plus-gray-text color note.
 
 ---
 
-## Priority 3b — "Focus on diffs" mode (extension, not yet implemented)
+## Priority 3b — "Focus on diffs" mode — ✅ DONE (2026-08-03)
+
+**Done, following the design below closely, with one correction found
+while implementing:** `Entry.PendingCount`/`DirtyCount`/`CleanCount`
+(`entry.go`) — three explicit leaf-count fields rather than the design's
+originally-proposed single `Dirty` bool plus a pending counter (see
+"Corrected" note below for why). `Flatten` gained a second parameter,
+`stopRecursion func(*Entry) bool`, alongside the existing `skip` — exactly
+the independent-lever split this section's design called for, already
+anticipated when `skip` was added for Priority 3. `internal/ui/compare.go`
+holds the three-tier bookkeeping: `initDiffCounts` (full bottom-up
+recompute, used once up front and after any mutation that changes a
+subtree's shape), `recordCompareResult` (the O(depth) incremental path
+called on every `compareResultMsg`, returning whether some ancestor just
+became confirmed clean), and `updateDiffCounts`/`removeDiffCounts`
+(propagate a mutation's delta to ancestors, or subtract a deleted entry's
+contribution — wired into `copyEntry`, `deleteEntry`, `beginRefresh`,
+`mergeDeleteMiddle`, and `mergeAllThreePresent`'s successful-merge path,
+the five existing call sites that change what a subtree looks like out
+from under the running totals). `focusMode`/`showCounts` fields on
+`Model`; `f` toggles focus mode and reflattens; `t` toggles the status
+line; `compareDoneMsg` unconditionally resets `showCounts` to `false`,
+`New`/`beginRefresh` set it `true`. `styleFocusClean` (plain gray
+foreground, no background — a confirmed-clean directory has no category
+worth preserving the way Hidden's dimming does) renders a collapsed-for-
+focus directory's own line, in `rowCols`, at the same priority tier as
+Hidden's dimming (after `isCursor`, matching precedent: the cursor row
+looks the same regardless of why the entry under it would otherwise be
+dimmed).
+
+**Bug found and fixed same day, reported live: individual clean files
+never vanished under focus mode — only whole clean directories did.**
+The first implementation only gave `Flatten` a recursion-level lever
+(`focusStopRecursion`, dimming a wholly-clean directory to one line) and
+never a *line*-level one for focus mode, unlike Hidden's `skip`. That
+meant a clean file sitting next to a differing sibling in a
+not-fully-clean directory — or a clean file with no wrapping directory
+at all, e.g. two flat directories of loose files — stayed fully visible
+forever, no matter how long focus mode was on. This directly contradicts
+this section's own stated goal, quoted below: "watch the visible tree
+progressively narrow down to just the files that actually differ" only
+holds if individual files disappear, not just whole subtrees. Fixed by
+adding `focusSkip` (`app.go`) — a *line*-level skip predicate, like
+`hiddenSkip`, that omits an individual clean **file** (never a directory
+— a directory still only dims via `focusStopRecursion`, since unlike a
+file it has a subtree whose shape would otherwise be lost by vanishing)
+— composed with `hiddenSkip` into one combined `lineSkip` at both
+`Flatten` call sites. This also required correcting
+`recordCompareResult`'s reflatten-trigger condition: it originally only
+returned true when some *ancestor's* aggregate reached confirmed-clean,
+but a leaf resolving Same can now change what's visible **on its own**
+regardless of any ancestor's state (a sibling still being pending must
+not suppress the leaf's own reflatten) — simplified to just `!dirty`,
+which is both simpler and was the actually-correct condition all along.
+Verified with a new regression test reproducing the exact reported shape
+(loose top-level files, no directory, one differs) plus a live-pty check
+confirming the fix against the real binary.
+
+**Corrected against this section's own design while implementing: counts,
+not a bool, for Dirty.** The original note below proposed "OR-ing the
+dirty bit into each ancestor, stopping as soon as an ancestor is already
+marked dirty" as a performance optimization — but the status line's
+`N differ` needs an exact *count* of dirty leaves, not a bool, and a
+count can't early-exit the way a bool can (every leaf's contribution has
+to reach the root for the root's total to stay accurate). Re-examined the
+actual performance concern once this was clear: the walk this triggers is
+bounded by tree *depth*, not tree *size* — nothing like `Flatten`'s O(n)
+full-list rebuild, which is the walk the "O(n²) trap" warning below is
+actually about. So the early-exit was never load-bearing for performance
+in the first place, just an assumption that didn't hold up once the
+status line's actual requirement (exact counts, not a bool) was
+considered — dropped it and always walk fully to the root, which is both
+simpler and correct for both consumers (per-directory collapse-gating
+*and* the root's status-line totals) from the same fields, matching the
+design's own "counts... fall out for free" intent even though its
+proposed mechanism (the bool) wouldn't have delivered it.
+
+**Reused, not rebuilt, for a rare edge case:** an empty directory present
+on only one side has no children to aggregate a `DirtyCount` from, so it
+reads as "confirmed clean" under this design even though its own presence
+is technically a difference. Decided not to special-case this (matches
+the "hobby project, not a CS thesis" scope discipline already applied
+elsewhere in this file) — accepted as a known, minor cosmetic gap rather
+than adding directory-level presence tracking on top of the per-leaf
+model, since it only affects an already-rare shape (a genuinely empty
+directory that exists on just one side).
+
+Verified with unit tests (`entry_test.go`: `Flatten`'s new
+`stopRecursion` parameter, independence from `skip`; `ui/focus_test.go`:
+`initDiffCounts`'s three leaf classifications and directory aggregation,
+`recordCompareResult`'s propagation and the corrected reflatten-trigger
+condition (including the regression case — a Same leaf with a still-
+pending sibling must still be treated as possibly visibility-changing),
+`updateDiffCounts`/`removeDiffCounts`, `focusStopRecursion`, `focusSkip`
+and `lineSkip` (including the exact reported bug shape: a clean loose
+file with no wrapping directory, next to a differing one), the `f`/`t`
+key bindings including the reflatten-gating behavior, `compareDoneMsg`'s
+unconditional `showCounts` reset, and `diffCountsSummary`'s
+pending-segment omission) plus a live-pty smoke test against the real
+compiled binary confirming the exact rendered SGR bytes: a confirmed-
+clean directory renders `38;5;245` (gray) while a dirty sibling directory
+stays plain white, the cursor row keeps its own
+styling when it lands on a collapsed-for-focus directory, and the status
+line correctly shows `2 clean · 1 differ` with the `pending` segment
+absent once the scan completes. `--help`, README, and `umerge.1` updated
+for `f`/`t` and the new "Focus mode" section.
+
+Below is the original design this was built from, unchanged except for
+the "Corrected" note above and the edge-case note also documented above.
 
 New idea, not from the Python version — an enhancement discovered while
 thinking about `git difftool -d` on a genuinely huge tree (Linux kernel,

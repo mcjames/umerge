@@ -96,3 +96,125 @@ func compareEntry(e *entry.Entry, ways int) compareResultMsg {
 	}
 	return msg
 }
+
+// ── focus mode (TODO.md Priority 3b): Pending/Dirty/Clean bookkeeping ──────────
+//
+// Three different update paths, each suited to how often it runs:
+//   - initDiffCounts: a full bottom-up recompute of a subtree. Used once
+//     up front (New) and after anything that changes what a subtree
+//     looks like out from under the running totals — a copy, delete,
+//     merge, or manual refresh (see updateDiffCounts/removeDiffCounts).
+//   - recordCompareResult: the O(depth) incremental path for the one
+//     leaf a single compareResultMsg is about, walking up through its
+//     ancestors. This is the one called on every message during a scan
+//     (potentially tens of thousands on a large tree), which is exactly
+//     why it must not be an O(n) full-tree recompute.
+//   - updateDiffCounts/removeDiffCounts: wrap initDiffCounts for the
+//     mutation call sites, propagating the delta between an entry's old
+//     and new counts up through its ancestors (or, for a deletion,
+//     simply subtracting its current contribution).
+
+// initDiffCounts computes e's Pending/Dirty/Clean leaf counts, bottom-up.
+// A file contributes to exactly one of the three: Pending if a compare
+// result for it hasn't arrived yet, Dirty immediately (no result is ever
+// coming) if it's a presence mismatch — absent on at least one required
+// side, known the instant the tree is built, per CLAUDE.md's eager/
+// synchronous BuildTree — or Dirty/Clean once its Compare state is
+// already known (Same is Clean; Different/BinaryDifferent/CompareError
+// are all Dirty — anything that isn't a confirmed-fine Same should keep
+// an entry visible under focus mode). A directory's counts are the sum
+// of its children's.
+func initDiffCounts(e *entry.Entry, ways int) {
+	if e.IsDir {
+		e.PendingCount, e.DirtyCount, e.CleanCount = 0, 0, 0
+		for _, c := range e.Children {
+			initDiffCounts(c, ways)
+			e.PendingCount += c.PendingCount
+			e.DirtyCount += c.DirtyCount
+			e.CleanCount += c.CleanCount
+		}
+		return
+	}
+	if !allSidesPresent(e, ways) {
+		e.PendingCount, e.DirtyCount, e.CleanCount = 0, 1, 0
+		return
+	}
+	switch e.Compare {
+	case entry.Same:
+		e.PendingCount, e.DirtyCount, e.CleanCount = 0, 0, 1
+	case entry.Uncompared:
+		e.PendingCount, e.DirtyCount, e.CleanCount = 1, 0, 0
+	default: // Different, BinaryDifferent, CompareError
+		e.PendingCount, e.DirtyCount, e.CleanCount = 0, 1, 0
+	}
+}
+
+// recordCompareResult updates the Pending/Dirty/Clean counts after e's
+// Compare state was just set by a compareResultMsg, walking up through
+// e's ancestors. Depth-bounded, not a full-tree walk — safe to call
+// unconditionally on every message a scan sends. Returns whether this
+// result can change what's visible under focus mode — true exactly when
+// e resolved Same, since that's the only kind of transition that does:
+// e itself becomes hideable (focusSkip), independent of whether any
+// ancestor directory's own aggregate happens to reach confirmed-clean at
+// the same time — a Different/error/binary result never makes anything
+// newly hideable, so it's always false there. This is the caller's cue
+// for whether a reflatten is actually needed: reflattening unconditionally
+// on every message would be the same O(n²) trap as recomputing counts
+// from scratch each time (see TODO.md Priority 3b's "performance risk"
+// note) — reflatten() itself recomputes the whole flat list fresh, so it
+// doesn't matter here whether it was e itself or some ancestor whose
+// visibility actually changed as a result.
+func recordCompareResult(e *entry.Entry) (mayChangeFocusVisibility bool) {
+	dirty := e.Compare != entry.Same
+	e.PendingCount = 0
+	if dirty {
+		e.DirtyCount = 1
+	} else {
+		e.CleanCount = 1
+	}
+	for p := e.Parent; p != nil; p = p.Parent {
+		p.PendingCount--
+		if dirty {
+			p.DirtyCount++
+		} else {
+			p.CleanCount++
+		}
+	}
+	return !dirty
+}
+
+// updateDiffCounts recomputes e's own Pending/Dirty/Clean counts (and,
+// if e is a directory, its whole subtree's, via initDiffCounts) and
+// propagates the resulting delta up through e's ancestors. Call this
+// after anything that changes what initDiffCounts already baked into
+// e's ancestors' running totals without going through the
+// compareResultMsg path: a copy or merge that changes which sides are
+// present, a synchronous recompare that changes e.Compare, or a
+// directory subtree rebuilt from disk.
+func (m Model) updateDiffCounts(e *entry.Entry) {
+	oldP, oldD, oldC := e.PendingCount, e.DirtyCount, e.CleanCount
+	initDiffCounts(e, m.ways)
+	dp, dd, dc := e.PendingCount-oldP, e.DirtyCount-oldD, e.CleanCount-oldC
+	if dp == 0 && dd == 0 && dc == 0 {
+		return
+	}
+	for p := e.Parent; p != nil; p = p.Parent {
+		p.PendingCount += dp
+		p.DirtyCount += dd
+		p.CleanCount += dc
+	}
+}
+
+// removeDiffCounts subtracts e's current Pending/Dirty/Clean
+// contribution from every ancestor — call this just before e is spliced
+// out of the tree entirely (a delete, or a merge that honors a
+// deletion), since e's own fields stop mattering once it's gone but its
+// ancestors' running totals must no longer include it.
+func removeDiffCounts(e *entry.Entry) {
+	for p := e.Parent; p != nil; p = p.Parent {
+		p.PendingCount -= e.PendingCount
+		p.DirtyCount -= e.DirtyCount
+		p.CleanCount -= e.CleanCount
+	}
+}

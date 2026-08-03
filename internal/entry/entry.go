@@ -86,6 +86,26 @@ type Entry struct {
 	// that assign one status to a whole resolved/copied subtree at once
 	// (e.g. a one-sided directory add copied wholesale).
 	Resolution ResolutionStatus
+
+	// PendingCount/DirtyCount/CleanCount are focus mode's (TODO.md
+	// Priority 3b) per-subtree leaf tallies — deliberately a *derived,
+	// computed* aggregate, unrelated to Hidden's user-managed flag above
+	// ("do not conflate," per that section's design notes). For a file,
+	// exactly one of these is 1 and the other two are 0: Pending means a
+	// compareResultMsg for it hasn't arrived yet (or, for a presence
+	// mismatch — absent on at least one side — that no compare will ever
+	// be run for it: known dirty the instant the tree is built, per
+	// CLAUDE.md's eager/synchronous BuildTree). For a directory, each is
+	// the sum of its children's — maintained incrementally (see
+	// ui.initDiffCounts/recordCompareResult/updateDiffCounts) rather than
+	// recomputed by a full subtree walk on every one of the — potentially
+	// tens of thousands of — messages a large tree's scan can send.
+	// "Confirmed clean" (safe to auto-collapse under focus mode) is
+	// PendingCount == 0 && DirtyCount == 0; CleanCount only matters for
+	// the status line's summary counts.
+	PendingCount int
+	DirtyCount   int
+	CleanCount   int
 }
 
 // BuildPair constructs a merged tree for a two-way comparison. ig may be nil
@@ -268,14 +288,21 @@ func (e *Entry) HasSelectedAncestor() bool {
 // because hiding a directory structurally skips descending into it, so a
 // descendant individually un-hidden later still renders on its own even
 // while its ancestor stays hidden.
-func Flatten(entries []*Entry, skip func(*Entry) bool) []*Entry {
+//
+// stopRecursion, if non-nil, is Flatten's other independent recursion
+// lever, alongside Collapsed — used by focus mode (TODO.md Priority 3b)
+// to stop descending into a directory once it's confirmed clean, without
+// omitting the directory's own line the way skip would. A directory's
+// children are visited only when it is both uncollapsed and
+// stopRecursion doesn't apply to it.
+func Flatten(entries []*Entry, skip func(*Entry) bool, stopRecursion func(*Entry) bool) []*Entry {
 	var out []*Entry
 	for _, e := range entries {
 		if skip == nil || !skip(e) {
 			out = append(out, e)
 		}
-		if e.IsDir && !e.Collapsed {
-			out = append(out, Flatten(e.Children, skip)...)
+		if e.IsDir && !e.Collapsed && (stopRecursion == nil || !stopRecursion(e)) {
+			out = append(out, Flatten(e.Children, skip, stopRecursion)...)
 		}
 	}
 	return out

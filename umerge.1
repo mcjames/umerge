@@ -267,6 +267,27 @@ Colored red.
 A directory's own marker is left blank when its children have a mix of
 statuses, since no single character can honestly summarize that; expand
 it to see each child's own status.
+.Ss Focus mode
+Toggled with
+.Ic f
+.Pq see Sx KEY BINDINGS :
+an individual file confirmed identical vanishes entirely, and a directory
+confirmed clean
+.Pq no differences anywhere beneath it, and nothing left to compare
+collapses to a single dimmed line instead of listing its contents.
+A directory that still has something pending, or a real difference
+somewhere inside, stays fully expanded — but each individual clean file
+within it still vanishes on its own, even sitting right next to a
+differing sibling, leaving only what actually differs.
+Intended for a large comparison with only a handful of real differences,
+where wading through everything unchanged to find them defeats the point
+of the tool.
+Clean subtrees never pop back into view once collapsed while a
+comparison is still running — the visible tree only ever shrinks, never
+grows, as the background scan completes.
+A subtree hidden with
+.Ic h
+stays hidden either way; focus mode never overrides an explicit hide.
 .Ss Diff counts
 Once a file comparison completes, a count is appended after the filename:
 .Bl -tag -width "= "
@@ -520,6 +541,21 @@ When on, hidden entries are rendered in a much darker shade of their
 usual color, with medium-gray text, rather than omitted
 .Pq e.g. a hidden-but-changed entry still shows blue, just a dark navy
 instead of its usual pale blue .
+.It Ic f
+Toggle focus mode
+.Pq see Sx Focus mode under Sx DISPLAY .
+.It Ic t
+Toggle a live
+.Dq Ar N No clean
+.No \(bu Ar N No pending
+.No \(bu Ar N No differ
+summary in the status bar, in place of the usual key-binding hints.
+Turns on automatically the moment a comparison starts and off again the
+moment it finishes, but can be toggled manually at any time in either
+phase.
+The
+.Ar pending
+segment is omitted once it reaches zero.
 .It Ic m
 Three-way mode only.
 Auto-merge the entry at the cursor into

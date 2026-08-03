@@ -194,10 +194,18 @@ func (m *Model) rebuildChildren(e *entry.Entry) {
 func (m *Model) beginRefresh(e *entry.Entry) tea.Cmd {
 	if e.IsDir {
 		m.rebuildChildren(e)
+		// The freshly re-enumerated subtree's comparable leaves are all
+		// Uncompared until the background re-compare below reports back —
+		// updateDiffCounts records them as pending (rather than leaving
+		// e's old, now-stale counts in place), so focus mode's collapse-
+		// gating and the status-line counts reflect the refresh
+		// immediately, not just once results start trickling in.
+		m.updateDiffCounts(e)
 		m.reflatten()
 	}
 	m.compareCh = startCompare([]*entry.Entry{e}, m.ways)
 	m.comparing = true
+	m.showCounts = true // a new background compare just started; see the field's own doc comment
 	return listenForCompare(m.compareCh)
 }
 
@@ -235,14 +243,18 @@ func (m *Model) copyEntry(e *entry.Entry, from, to byte) {
 
 	if e.IsDir {
 		m.rebuildChildren(e)
-		// m.flat is a separately-maintained flattened cache of the tree —
-		// it isn't re-derived automatically just because e.Children changed
-		// underneath it. Without this, a directory copy's new contents are
-		// invisible until something else (e.g. collapse/expand) happens to
-		// call reflatten for its own reasons.
-		m.reflatten()
 	}
 	m.recompareSubtree(e)
+	m.updateDiffCounts(e)
+	// m.flat is a separately-maintained flattened cache of the tree — it
+	// isn't re-derived automatically just because e.Children or its
+	// Pending/Dirty/Clean counts changed underneath it. Without this, a
+	// directory copy's new contents (or, under focus mode, a subtree that
+	// just became or stopped being confirmed clean) stay invisible until
+	// something else happens to call reflatten for its own reasons.
+	if e.IsDir || m.focusMode {
+		m.reflatten()
+	}
 }
 
 // deleteEntry removes every present side of e from disk. On success, e is
@@ -264,6 +276,7 @@ func (m *Model) deleteEntry(e *entry.Entry) {
 		m.flash = "Delete failed: " + firstErr.Error()
 		return
 	}
+	removeDiffCounts(e)
 	m.entries = removeEntry(m.entries, e)
 	m.reflatten()
 }

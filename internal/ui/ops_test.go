@@ -16,7 +16,7 @@ func newTestModel(ways int, leftRoot, middleRoot, rightRoot string, entries []*e
 		rightRoot:  rightRoot,
 		entries:    entries,
 	}
-	m.flat = entry.Flatten(entries, hiddenSkip(m.renderHidden))
+	m.flat = entry.Flatten(entries, hiddenSkip(m.renderHidden), focusStopRecursion(m.focusMode))
 	return m
 }
 

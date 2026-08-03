@@ -227,7 +227,7 @@ func TestFlatten_FlatSiblingsOnly(t *testing.T) {
 		{Name: "a"},
 		{Name: "b"},
 	}
-	flat := Flatten(entries, nil)
+	flat := Flatten(entries, nil, nil)
 	if len(flat) != 2 || flat[0].Name != "a" || flat[1].Name != "b" {
 		t.Fatalf("got %+v", flat)
 	}
@@ -245,7 +245,7 @@ func TestFlatten_ExpandedDirIncludesChildren(t *testing.T) {
 		},
 		{Name: "z"},
 	}
-	flat := Flatten(entries, nil)
+	flat := Flatten(entries, nil, nil)
 	wantOrder := []string{"dir", "child1", "child2", "z"}
 	if len(flat) != len(wantOrder) {
 		t.Fatalf("got %d entries, want %d: %+v", len(flat), len(wantOrder), flat)
@@ -269,7 +269,7 @@ func TestFlatten_CollapsedDirSkipsChildren(t *testing.T) {
 		},
 		{Name: "z"},
 	}
-	flat := Flatten(entries, nil)
+	flat := Flatten(entries, nil, nil)
 	wantOrder := []string{"dir", "z"}
 	if len(flat) != len(wantOrder) {
 		t.Fatalf("got %d entries, want %d: %+v", len(flat), len(wantOrder), flat)
@@ -297,7 +297,7 @@ func TestFlatten_MixedCollapsedAndExpandedSiblings(t *testing.T) {
 			},
 		},
 	}
-	flat := Flatten(entries, nil)
+	flat := Flatten(entries, nil, nil)
 	wantOrder := []string{"collapsed", "expanded", "shown-child"}
 	if len(flat) != len(wantOrder) {
 		t.Fatalf("got %d entries, want %d: %+v", len(flat), len(wantOrder), flat)
@@ -431,7 +431,7 @@ func TestFlatten_SkipOmitsEntryButStillDescendsIntoChildren(t *testing.T) {
 	entries := []*Entry{dir, {Name: "z"}}
 
 	skip := func(e *Entry) bool { return e.Hidden }
-	flat := Flatten(entries, skip)
+	flat := Flatten(entries, skip, nil)
 
 	wantOrder := []string{"child", "z"}
 	if len(flat) != len(wantOrder) {
@@ -446,9 +446,60 @@ func TestFlatten_SkipOmitsEntryButStillDescendsIntoChildren(t *testing.T) {
 
 func TestFlatten_NilSkipKeepsEveryEntry(t *testing.T) {
 	entries := []*Entry{{Name: "a", Hidden: true}, {Name: "b"}}
-	flat := Flatten(entries, nil)
+	flat := Flatten(entries, nil, nil)
 	if len(flat) != 2 {
 		t.Fatalf("got %d entries, want 2: %+v", len(flat), flat)
+	}
+}
+
+func TestFlatten_StopRecursionKeepsDirLineButOmitsChildren(t *testing.T) {
+	// Focus mode's shape (TODO.md Priority 3b): unlike skip, stopRecursion
+	// must still render the directory's own line — only its children stop
+	// being visited.
+	child := &Entry{Name: "child"}
+	dir := &Entry{Name: "dir", IsDir: true, Children: []*Entry{child}}
+	entries := []*Entry{dir, {Name: "z"}}
+
+	stop := func(e *Entry) bool { return e.Name == "dir" }
+	flat := Flatten(entries, nil, stop)
+
+	wantOrder := []string{"dir", "z"}
+	if len(flat) != len(wantOrder) {
+		t.Fatalf("got %d entries, want %d: %+v", len(flat), len(wantOrder), flat)
+	}
+	for i, name := range wantOrder {
+		if flat[i].Name != name {
+			t.Errorf("flat[%d].Name = %q, want %q", i, flat[i].Name, name)
+		}
+	}
+}
+
+func TestFlatten_NilStopRecursionDescendsNormally(t *testing.T) {
+	entries := []*Entry{
+		{Name: "dir", IsDir: true, Children: []*Entry{{Name: "child"}}},
+	}
+	flat := Flatten(entries, nil, nil)
+	if len(flat) != 2 {
+		t.Fatalf("got %d entries, want 2 (dir + child): %+v", len(flat), flat)
+	}
+}
+
+func TestFlatten_SkipAndStopRecursionAreIndependent(t *testing.T) {
+	// A hidden-but-not-confirmed-clean directory: its own line is omitted
+	// (skip), but stopRecursion doesn't apply, so its child still renders
+	// — mirroring "explicit hide always wins" (TODO.md Priority 3b): focus
+	// mode's recursion gate is a completely separate lever from Hidden's
+	// line-level one, so neither can be mistaken for controlling the other.
+	child := &Entry{Name: "child"}
+	dir := &Entry{Name: "dir", IsDir: true, Hidden: true, Children: []*Entry{child}}
+	entries := []*Entry{dir}
+
+	skip := func(e *Entry) bool { return e.Hidden }
+	stop := func(e *Entry) bool { return false } // never stops recursion
+	flat := Flatten(entries, skip, stop)
+
+	if len(flat) != 1 || flat[0].Name != "child" {
+		t.Fatalf("got %+v, want just [child]", flat)
 	}
 }
 

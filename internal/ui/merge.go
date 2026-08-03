@@ -232,6 +232,7 @@ func (m *Model) mergeAllThreePresent(e *entry.Entry) {
 	}
 	e.Resolution = entry.ResolutionMerged
 	m.recompareSubtree(e)
+	m.updateDiffCounts(e)
 }
 
 // mergeCopyToMiddle copies e from side "from" to middle (reusing the
@@ -267,7 +268,10 @@ func (m *Model) mergeDeleteMiddle(e *entry.Entry) {
 		m.rebuildChildren(e)
 	}
 	if e.Left == nil && e.Right == nil {
+		removeDiffCounts(e)
 		m.entries = removeEntry(m.entries, e)
+	} else {
+		m.updateDiffCounts(e)
 	}
 	m.reflatten()
 }

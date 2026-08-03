@@ -143,6 +143,8 @@ func printHelp(w io.Writer, prog string) {
 	fmt.Fprintf(w, "  r                     re-enumerate and re-compare current item (background)\n")
 	fmt.Fprintf(w, "  h                     toggle hidden flag on current item (and its subtree)\n")
 	fmt.Fprintf(w, "  H                     toggle whether hidden items are shown\n")
+	fmt.Fprintf(w, "  f                     toggle focus mode: hide identical files, collapse clean dirs\n")
+	fmt.Fprintf(w, "  t                     toggle clean/pending/differ counts in the status bar\n")
 	fmt.Fprintf(w, "  m                     three-way only: auto-merge current item into the middle\n")
 	fmt.Fprintf(w, "  M                     three-way only: auto-merge every selected item into the middle\n")
 	fmt.Fprintf(w, "  n                     three-way only: auto-merge the entire tree in one keystroke\n")

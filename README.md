@@ -63,6 +63,11 @@ own directory-diff mechanism.
 - Collapsible directories, diff-hunk counts per file, Unicode tree symbols
   (▶/▼) by default, with an ASCII fallback (`-A`/`--ascii`) for terminals
   that render the Unicode ones at the wrong width
+- Focus mode (`f`): auto-collapses directories confirmed clean (no
+  differences anywhere beneath them) to one dimmed line, so a huge
+  comparison with only a handful of real changes doesn't drown them in
+  thousands of unchanged files; `t` shows live clean/pending/differ
+  counts in the status bar instead of the usual key-binding hints
 - Respects a top-level `.gitignore` by default (plus always hiding `.git`
   itself), so comparing a real repo doesn't drown you in build artifacts;
   pass `-I`/`--no-gitignore` to see everything
@@ -122,6 +127,8 @@ Key bindings (see `umerge --help` or `man umerge` for the full list):
 | `r` | re-enumerate and re-compare the entry at the cursor, in the background |
 | `h` | toggle the hidden flag on the entry at the cursor (and its subtree) |
 | `H` | toggle whether hidden entries are shown at all |
+| `f` | toggle focus mode: auto-collapse confirmed-clean directories |
+| `t` | toggle clean/pending/differ counts in the status bar |
 | `m` | three-way only: auto-merge the entry at the cursor into the middle |
 | `M` | three-way only: auto-merge every selected entry into the middle |
 | `n` | three-way only: auto-merge the entire tree into the middle in one keystroke |
@@ -171,6 +178,33 @@ auto-clear on its own, even if a save happens to zero out the diff count).
 
 `m`/`M`/`n`/`R` are disabled (with a status-bar message explaining why)
 when run with `-r`/`--read-only`.
+
+### Focus mode
+
+On a huge tree (two Linux kernel checkouts, say) with only a handful of
+real differences, wading through thousands of unchanged files to find
+them defeats the point of a diff tool. `f` toggles focus mode: an
+individual file confirmed identical vanishes entirely, and a directory
+confirmed clean — no differences anywhere beneath it, and nothing left to
+compare — collapses to a single dimmed line instead of listing its
+(uninteresting) contents. This applies even to a clean file sitting right
+next to a differing sibling in the same directory — the directory itself
+stays expanded (it has a real difference inside), but each individual
+clean file within it still disappears, leaving only what actually
+differs. On a large comparison this produces a nice effect for free:
+turn focus mode on early and watch the visible tree progressively narrow
+down to just the files that actually differ as the background scan
+completes — clean subtrees never pop back into view once collapsed, so
+the tree only ever shrinks while a scan is running, never jumps around.
+
+A subtree you've explicitly hidden with `h` stays hidden either way —
+focus mode never overrides that.
+
+`t` swaps the status bar's key-binding hints for a live summary instead:
+`1,842 clean · 12 pending · 3 differ` (the `pending` segment disappears
+once it hits zero). This turns on automatically the moment a comparison
+starts and turns back off the moment it finishes, but you can toggle it
+manually with `t` at any time in either phase.
 
 By default, entries matched by a top-level `.gitignore` in any compared
 root are skipped (along with `.git` itself, always). This only reads the

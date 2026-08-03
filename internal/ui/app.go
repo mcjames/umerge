@@ -100,6 +100,20 @@ var (
 				Background(lipgloss.Color("#35141a")).
 				Foreground(lipgloss.Color("245"))
 
+	// styleFocusClean: a directory auto-collapsed under focus mode
+	// because it's confirmed clean (TODO.md Priority 3b) — visually
+	// distinct from a directory the user collapsed manually themselves,
+	// which might still contain something interesting. A confirmed-clean
+	// directory has (modulo an empty directory present on only one side —
+	// a known, accepted edge case, see the field's own doc comment) no
+	// category worth preserving the way Hidden's dimming does, so this is
+	// deliberately its own plain gray-on-default style rather than reusing
+	// styleHiddenNormal — same look, but the two concepts stay
+	// independently named in case one needs to change later without
+	// affecting the other.
+	styleFocusClean = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("245"))
+
 	// styleSelectedMarker: the `s`-key selection marker glyph. Its own
 	// isolated style, deliberately never aliased to or derived from an
 	// existing semantic style — an entry's diff-status color (unique/
@@ -184,6 +198,9 @@ type Model struct {
 	flash           string // one-shot status message (e.g. "nothing to copy"), cleared on the next key
 
 	renderHidden bool // `H` key; false by default — user-hidden entries stay out of m.flat until toggled on
+
+	focusMode  bool // `f` key; false by default — TODO.md Priority 3b, auto-collapses confirmed-clean directories
+	showCounts bool // `t` key; status bar shows clean/pending/differ counts instead of the hints line while true
 }
 
 // hiddenSkip is the Flatten skip-predicate for user-hidden entries (the `h`
@@ -192,6 +209,43 @@ type Model struct {
 func hiddenSkip(renderHidden bool) func(*entry.Entry) bool {
 	return func(e *entry.Entry) bool {
 		return e.Hidden && !renderHidden
+	}
+}
+
+// focusSkip is focus mode's (TODO.md Priority 3b) *line*-level omission:
+// an individual clean file vanishes entirely under focus mode — this is
+// what actually delivers "the visible tree narrows down to just the
+// files that differ" (the design's own stated goal), not just whole
+// clean directories collapsing. A clean directory instead dims to one
+// summary line rather than vanishing (see focusStopRecursion) — that
+// distinction exists because a directory has a subtree whose shape would
+// otherwise be lost by disappearing; a single file has no such subtree,
+// so there's nothing to lose by hiding it outright, same as Hidden does.
+func focusSkip(focusMode bool) func(*entry.Entry) bool {
+	return func(e *entry.Entry) bool {
+		return focusMode && !e.IsDir && e.PendingCount == 0 && e.DirtyCount == 0
+	}
+}
+
+// lineSkip combines every reason an entry's own line might be omitted
+// from m.flat — user-hidden (hiddenSkip) or, independently, focus mode's
+// clean-file omission (focusSkip) — into the single predicate Flatten's
+// skip parameter accepts.
+func lineSkip(renderHidden, focusMode bool) func(*entry.Entry) bool {
+	hs, fs := hiddenSkip(renderHidden), focusSkip(focusMode)
+	return func(e *entry.Entry) bool {
+		return hs(e) || fs(e)
+	}
+}
+
+// focusStopRecursion is Flatten's other recursion lever (TODO.md
+// Priority 3b): a directory's children stop being visited once it's
+// confirmed clean — no diffs anywhere beneath it, and nothing left
+// pending — while focus mode is on. Unlike hiddenSkip this never omits
+// the directory's own line; only its descendants stop being visited.
+func focusStopRecursion(focusMode bool) func(*entry.Entry) bool {
+	return func(e *entry.Entry) bool {
+		return focusMode && e.PendingCount == 0 && e.DirtyCount == 0
 	}
 }
 
@@ -208,6 +262,13 @@ func New(leftRoot, middleRoot, rightRoot string, entries []*entry.Entry, mergeTo
 	if middleRoot != "" {
 		ways = 3
 	}
+	// Focus mode's Pending/Dirty/Clean counts (TODO.md Priority 3b) need a
+	// baseline before the first render or compareResultMsg increments
+	// them — otherwise a directory would render as spuriously "confirmed
+	// clean" (all fields zero) until the first result about it arrives.
+	for _, e := range entries {
+		initDiffCounts(e, ways)
+	}
 	ch := startCompare(entries, ways)
 	m := Model{
 		ways:       ways,
@@ -221,8 +282,9 @@ func New(leftRoot, middleRoot, rightRoot string, entries []*entry.Entry, mergeTo
 		entries:    entries,
 		compareCh:  ch,
 		comparing:  true,
+		showCounts: true, // set the moment comparison starts; see compareDoneMsg
 	}
-	m.flat = entry.Flatten(entries, hiddenSkip(m.renderHidden))
+	m.flat = entry.Flatten(entries, lineSkip(m.renderHidden, m.focusMode), focusStopRecursion(m.focusMode))
 	return m
 }
 
@@ -240,11 +302,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		msg.e.NumDiffs = msg.numDiffs
 		msg.e.LMDiffs = msg.lmDiffs
 		msg.e.MRDiffs = msg.mrDiffs
+		// Depth-bounded, unlike reflatten (see recordCompareResult) — safe
+		// to run on every message a scan sends. Only reflatten when this
+		// specific message could actually change what's visible under
+		// focus mode (msg.e resolved Same, so it just became hideable);
+		// reflattening unconditionally here would be an O(n²) trap on a
+		// large tree (TODO.md Priority 3b).
+		if mayChangeFocusVisibility := recordCompareResult(msg.e); mayChangeFocusVisibility && m.focusMode {
+			m.reflatten()
+		}
 		return m, listenForCompare(m.compareCh)
 
 	case compareDoneMsg:
 		m.compareCh = nil
 		m.comparing = false
+		m.showCounts = false // unconditional reset — see the field's own doc comment
 
 	case toolDoneMsg:
 		// The tool may have edited the file — re-derive its comparison
@@ -255,6 +327,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// already used for copyEntry's post-copy recompare.
 		if msg.e != nil {
 			m.recompareSubtree(msg.e)
+			m.updateDiffCounts(msg.e)
+			if m.focusMode {
+				m.reflatten()
+			}
 		}
 
 	case tea.WindowSizeMsg:
@@ -385,6 +461,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "H":
 			m.renderHidden = !m.renderHidden
 			m.reflatten()
+
+		case "f":
+			m.focusMode = !m.focusMode
+			m.reflatten()
+
+		case "t":
+			m.showCounts = !m.showCounts
 
 		case "r":
 			if m.comparing {
@@ -530,7 +613,7 @@ func (m Model) handleCopyDestination(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) reflatten() {
-	m.flat = entry.Flatten(m.entries, hiddenSkip(m.renderHidden))
+	m.flat = entry.Flatten(m.entries, lineSkip(m.renderHidden, m.focusMode), focusStopRecursion(m.focusMode))
 	if m.cursor >= len(m.flat) {
 		m.cursor = len(m.flat) - 1
 	}
@@ -608,12 +691,22 @@ func (m Model) View() string {
 	if n := len(selectedRoots(m.entries)); n > 0 {
 		selected = fmt.Sprintf("  %d selected (esc clear)", n)
 	}
-	hints := "q quit  ←→/enter collapse  ↑↓/jk move  PgUp/PgDn scroll  s select  a/b/d copy/del"
+	// The default status-bar slot: clean/pending/differ counts while
+	// showCounts is on (set automatically the moment comparison starts,
+	// reset the moment it finishes — see compareDoneMsg — but toggleable
+	// with `t` at any time in either phase), otherwise the usual hints
+	// line. prompt/flash below still take priority over either — they're
+	// transient, higher-urgency signals; this only governs what shows
+	// when nothing else is going on.
+	defaultSlot := "q quit  ←→/enter collapse  ↑↓/jk move  PgUp/PgDn scroll  s select  a/b/d copy/del"
 	if m.ways == 3 {
-		hints += "  m/M/n merge  R resolved"
+		defaultSlot += "  m/M/n merge  R resolved"
+	}
+	if m.showCounts {
+		defaultSlot = m.diffCountsSummary()
 	}
 	status := fmt.Sprintf(" %d/%d%s%s  %s",
-		m.cursor+1, len(m.flat), comparing, selected, hints)
+		m.cursor+1, len(m.flat), comparing, selected, defaultSlot)
 	switch {
 	case m.prompt != "":
 		status = " " + m.prompt
@@ -657,6 +750,12 @@ func (m Model) rowCols(idx int, isCursor bool) ([]string, []lipgloss.Style) {
 		normal, unique, err = styleCursor, styleCursorUnique, styleCursorError
 	case e.Hidden:
 		normal, unique, err = styleHiddenNormal, styleHiddenUnique, styleHiddenError
+	case m.focusMode && e.IsDir && e.PendingCount == 0 && e.DirtyCount == 0:
+		// Same "confirmed clean" test as focusStopRecursion — a directory
+		// whose children just stopped being visited because there's
+		// nothing left in it worth looking at, dimmed to read as
+		// distinct from a directory the user collapsed themselves.
+		normal, unique, err = styleFocusClean, styleFocusClean, styleFocusClean
 	}
 
 	// Determine whether every side is present.
@@ -918,6 +1017,27 @@ func (m Model) diffCounts(e *entry.Entry) []*int {
 		counts[2] = &mr
 	}
 	return counts
+}
+
+// diffCountsSummary renders the "N clean · M pending · K differ" status
+// line shown while showCounts is on (TODO.md Priority 3b), summed across
+// every top-level entry — the root's totals fall out for free from the
+// same Pending/Dirty/Clean bookkeeping focus mode's collapse-gating
+// already needs, no separate tally required. The pending segment is
+// dropped entirely once it reaches zero, rather than showing "0 pending".
+func (m Model) diffCountsSummary() string {
+	var clean, pending, dirty int
+	for _, e := range m.entries {
+		clean += e.CleanCount
+		pending += e.PendingCount
+		dirty += e.DirtyCount
+	}
+	s := fmt.Sprintf("%d clean", clean)
+	if pending > 0 {
+		s += fmt.Sprintf(" · %d pending", pending)
+	}
+	s += fmt.Sprintf(" · %d differ", dirty)
+	return s
 }
 
 // collapsedArrow/expandedArrow: the Unicode default looks better and
