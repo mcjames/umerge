@@ -18,6 +18,12 @@ const (
 	// binary content — hunk-counting doesn't apply, since diff/diff3 are
 	// never invoked for this case (see fileops.CompareTwoFiles).
 	BinaryDifferent
+	// SymlinkDifferent means at least one side is a symbolic link and
+	// either the other side isn't a symlink too, or their targets
+	// differ — classified by comparing link target strings (see
+	// ui.compareSymlinks), never by reading through the symlink, which
+	// fails outright for a symlink to a directory.
+	SymlinkDifferent
 )
 
 // ResolutionStatus is the 3-way merge workflow's per-entry status marker

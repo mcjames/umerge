@@ -779,7 +779,7 @@ func (m Model) rowCols(idx int, isCursor bool) ([]string, []lipgloss.Style) {
 			} else {
 				styles[i] = normal
 			}
-		case allPresent && (e.Compare == entry.Different || e.Compare == entry.BinaryDifferent):
+		case allPresent && (e.Compare == entry.Different || e.Compare == entry.BinaryDifferent || e.Compare == entry.SymlinkDifferent):
 			styles[i] = m.diffStyleForCol(e, i, isCursor)
 		case allPresent:
 			// Same or still Uncompared — normal white.
@@ -804,11 +804,11 @@ func (m Model) rowCols(idx int, isCursor bool) ([]string, []lipgloss.Style) {
 //	lmDiffs > 0  →  left + middle blue
 //	mrDiffs > 0  →  middle + right blue
 //
-// BinaryDifferent entries never have LMDiffs/MRDiffs set (diff3 is never
-// invoked for them — see fileops.CompareThreeFiles), so they're colored
-// uniformly across all columns rather than falling through the per-pair
-// logic below, which would otherwise see zero counts and wrongly render
-// them as unchanged.
+// BinaryDifferent/SymlinkDifferent entries never have LMDiffs/MRDiffs set
+// (diff3 is never invoked for them — see fileops.CompareThreeFiles and
+// ui.compareSymlinks), so they're colored uniformly across all columns
+// rather than falling through the per-pair logic below, which would
+// otherwise see zero counts and wrongly render them as unchanged.
 func (m Model) diffStyleForCol(e *entry.Entry, col int, isCursor bool) lipgloss.Style {
 	changed, normal := styleChanged, styleNormal
 	switch {
@@ -817,7 +817,7 @@ func (m Model) diffStyleForCol(e *entry.Entry, col int, isCursor bool) lipgloss.
 	case e.Hidden:
 		changed, normal = styleHiddenChanged, styleHiddenNormal
 	}
-	if m.ways == 2 || e.Compare == entry.BinaryDifferent {
+	if m.ways == 2 || e.Compare == entry.BinaryDifferent || e.Compare == entry.SymlinkDifferent {
 		return changed
 	}
 	// 3-way: color only the columns adjacent to the differing pair.
@@ -1000,11 +1000,13 @@ func (m Model) paths(e *entry.Entry) []*string {
 
 // diffCounts returns a per-column diff count pointer (nil = don't show).
 // For 2-way: [left count, nil]. For 3-way: [lm count, nil, mr count].
-// BinaryDifferent entries never get a numeric count — entryText shows a
-// "bin" marker for those instead, since a hunk count doesn't apply.
+// BinaryDifferent/SymlinkDifferent entries never get a numeric count —
+// entryText shows a "bin"/"link" marker for those instead, since a hunk
+// count doesn't apply to either.
 func (m Model) diffCounts(e *entry.Entry) []*int {
 	none := make([]*int, m.ways)
-	if e.IsDir || e.Compare == entry.Uncompared || e.Compare == entry.CompareError || e.Compare == entry.BinaryDifferent {
+	if e.IsDir || e.Compare == entry.Uncompared || e.Compare == entry.CompareError ||
+		e.Compare == entry.BinaryDifferent || e.Compare == entry.SymlinkDifferent {
 		return none
 	}
 	counts := make([]*int, m.ways)
@@ -1084,6 +1086,10 @@ func entryText(e *entry.Entry, path *string, count *int, ascii bool) string {
 		// No hunk count applies — diff/diff3 are never invoked for this
 		// entry (see fileops.CompareTwoFiles/CompareThreeFiles).
 		text += " bin"
+	case e.Compare == entry.SymlinkDifferent:
+		// No hunk count applies — classified by link target, not content
+		// (see ui.compareSymlinks).
+		text += " link"
 	case count != nil:
 		if *count == 0 {
 			text += " ="

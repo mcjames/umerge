@@ -83,6 +83,16 @@ func main() {
 	var left, middle, right string
 	var ig *entry.Ignore
 
+	// BuildTree is eager and synchronous (see CLAUDE.md) — on a huge tree
+	// (a Linux kernel checkout, say) this alone can take several seconds,
+	// with nothing yet on screen to say so; without this, that pause reads
+	// exactly like a hang. Printed before entering the alt screen, so it's
+	// simply gone once the TUI takes over. Not a general progress
+	// indicator — just enough reassurance for this one known, deliberately
+	// unoptimized startup cost (see TODO.md Priority 12: real lazy loading
+	// is a separate, larger piece of work).
+	fmt.Fprintln(os.Stderr, "Scanning directories...")
+
 	if len(absDirs) == 2 {
 		left, right = absDirs[0], absDirs[1]
 		if !*noGitignoreFlag {

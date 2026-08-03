@@ -226,3 +226,161 @@ func TestCompareEntry_ThreeWayBinaryDifferent(t *testing.T) {
 		t.Errorf("state = %v, want BinaryDifferent", msg.state)
 	}
 }
+
+// ── compareSymlinks / symlink handling in compareEntry ───────────────────────
+//
+// Regression coverage for the bug reported live: a symlink to a directory
+// (e.g. the Linux kernel's scripts/dtc/include-prefixes) showed up as a
+// red CompareError, because comparison tried to read through it as a
+// regular file, which fails outright ("is a directory").
+
+func mkSymlink(t *testing.T, dir, name, target string) string {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	if err := os.Symlink(target, p); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestCompareSymlinks_NoneAreSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	a := writeFile(t, dir, "a.txt", "content\n")
+	b := writeFile(t, dir, "b.txt", "content\n")
+
+	_, handled := compareSymlinks([]string{a, b})
+	if handled {
+		t.Error("handled = true, want false — neither path is a symlink, caller should fall through")
+	}
+}
+
+func TestCompareSymlinks_IdenticalTargetsAreSame(t *testing.T) {
+	dir := t.TempDir()
+	a := mkSymlink(t, dir, "a", "same-target")
+	b := mkSymlink(t, dir, "b", "same-target")
+
+	state, handled := compareSymlinks([]string{a, b})
+	if !handled {
+		t.Fatal("handled = false, want true — at least one path is a symlink")
+	}
+	if state != entry.Same {
+		t.Errorf("state = %v, want Same", state)
+	}
+}
+
+func TestCompareSymlinks_DifferentTargetsAreSymlinkDifferent(t *testing.T) {
+	dir := t.TempDir()
+	a := mkSymlink(t, dir, "a", "target-one")
+	b := mkSymlink(t, dir, "b", "target-two")
+
+	state, handled := compareSymlinks([]string{a, b})
+	if !handled {
+		t.Fatal("handled = false, want true")
+	}
+	if state != entry.SymlinkDifferent {
+		t.Errorf("state = %v, want SymlinkDifferent", state)
+	}
+}
+
+func TestCompareSymlinks_SymlinkVsRegularFileIsSymlinkDifferent(t *testing.T) {
+	dir := t.TempDir()
+	link := mkSymlink(t, dir, "link", "somewhere")
+	regular := writeFile(t, dir, "regular", "somewhere")
+
+	state, handled := compareSymlinks([]string{link, regular})
+	if !handled {
+		t.Fatal("handled = false, want true — at least one side is a symlink")
+	}
+	if state != entry.SymlinkDifferent {
+		t.Errorf("state = %v, want SymlinkDifferent — a symlink and a regular file are never the same kind of thing", state)
+	}
+}
+
+func TestCompareSymlinks_ThreeWayAllIdentical(t *testing.T) {
+	dir := t.TempDir()
+	a := mkSymlink(t, dir, "a", "same-target")
+	b := mkSymlink(t, dir, "b", "same-target")
+	c := mkSymlink(t, dir, "c", "same-target")
+
+	state, handled := compareSymlinks([]string{a, b, c})
+	if !handled || state != entry.Same {
+		t.Errorf("state=%v handled=%v, want Same, true", state, handled)
+	}
+}
+
+func TestCompareSymlinks_ThreeWayOneOddOneOut(t *testing.T) {
+	dir := t.TempDir()
+	a := mkSymlink(t, dir, "a", "same-target")
+	b := mkSymlink(t, dir, "b", "same-target")
+	c := mkSymlink(t, dir, "c", "different-target")
+
+	state, handled := compareSymlinks([]string{a, b, c})
+	if !handled || state != entry.SymlinkDifferent {
+		t.Errorf("state=%v handled=%v, want SymlinkDifferent, true", state, handled)
+	}
+}
+
+func TestCompareSymlinks_NonexistentPathErrors(t *testing.T) {
+	dir := t.TempDir()
+	a := mkSymlink(t, dir, "a", "somewhere")
+
+	state, handled := compareSymlinks([]string{a, filepath.Join(dir, "does-not-exist")})
+	if !handled {
+		t.Fatal("handled = false, want true")
+	}
+	if state != entry.CompareError {
+		t.Errorf("state = %v, want CompareError", state)
+	}
+}
+
+// TestCompareEntry_SymlinkToDirectory_TwoWay is the exact regression case:
+// a symlink to a directory, identical on both sides (as in a self-
+// comparison, or two checkouts of the same repo) — must classify as
+// Same, not crash or CompareError.
+func TestCompareEntry_SymlinkToDirectory_TwoWay(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	if err := os.MkdirAll(filepath.Join(leftRoot, "target"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(rightRoot, "target"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	left := mkSymlink(t, leftRoot, "link", "target")
+	right := mkSymlink(t, rightRoot, "link", "target")
+	e := &entry.Entry{Left: &left, Right: &right}
+
+	msg := compareEntry(e, 2)
+	if msg.state != entry.Same {
+		t.Errorf("state = %v, want Same", msg.state)
+	}
+}
+
+func TestCompareEntry_SymlinkToDirectory_ThreeWay(t *testing.T) {
+	leftRoot, middleRoot, rightRoot := t.TempDir(), t.TempDir(), t.TempDir()
+	for _, root := range []string{leftRoot, middleRoot, rightRoot} {
+		if err := os.MkdirAll(filepath.Join(root, "target"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	left := mkSymlink(t, leftRoot, "link", "target")
+	middle := mkSymlink(t, middleRoot, "link", "target")
+	right := mkSymlink(t, rightRoot, "link", "target")
+	e := &entry.Entry{Left: &left, Middle: &middle, Right: &right}
+
+	msg := compareEntry(e, 3)
+	if msg.state != entry.Same {
+		t.Errorf("state = %v, want Same", msg.state)
+	}
+}
+
+func TestCompareEntry_SymlinkTargetsDiffer(t *testing.T) {
+	leftRoot, rightRoot := t.TempDir(), t.TempDir()
+	left := mkSymlink(t, leftRoot, "link", "target-a")
+	right := mkSymlink(t, rightRoot, "link", "target-b")
+	e := &entry.Entry{Left: &left, Right: &right}
+
+	msg := compareEntry(e, 2)
+	if msg.state != entry.SymlinkDifferent {
+		t.Errorf("state = %v, want SymlinkDifferent", msg.state)
+	}
+}

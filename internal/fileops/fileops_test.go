@@ -619,3 +619,87 @@ func TestMergeThreeFiles_RealErrorOnMissingFile(t *testing.T) {
 		t.Fatal("expected an error merging against a nonexistent file, got nil")
 	}
 }
+
+func TestSymlinkTarget_RegularFileIsNotASymlink(t *testing.T) {
+	dir := t.TempDir()
+	p := writeFile(t, dir, "f.txt", "content\n")
+
+	target, isSymlink, err := SymlinkTarget(p)
+	if err != nil {
+		t.Fatalf("SymlinkTarget: %v", err)
+	}
+	if isSymlink {
+		t.Error("isSymlink = true, want false for a regular file")
+	}
+	if target != "" {
+		t.Errorf("target = %q, want empty", target)
+	}
+}
+
+func TestSymlinkTarget_DirectoryIsNotASymlink(t *testing.T) {
+	dir := t.TempDir()
+
+	target, isSymlink, err := SymlinkTarget(dir)
+	if err != nil {
+		t.Fatalf("SymlinkTarget: %v", err)
+	}
+	if isSymlink {
+		t.Error("isSymlink = true, want false for a plain directory")
+	}
+	if target != "" {
+		t.Errorf("target = %q, want empty", target)
+	}
+}
+
+func TestSymlinkTarget_SymlinkToDirectory(t *testing.T) {
+	dir := t.TempDir()
+	targetDir := filepath.Join(dir, "target")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink("target", link); err != nil {
+		t.Fatal(err)
+	}
+
+	target, isSymlink, err := SymlinkTarget(link)
+	if err != nil {
+		t.Fatalf("SymlinkTarget: %v", err)
+	}
+	if !isSymlink {
+		t.Fatal("isSymlink = false, want true")
+	}
+	if target != "target" {
+		t.Errorf("target = %q, want %q", target, "target")
+	}
+}
+
+func TestSymlinkTarget_DoesNotFollowThroughToReadTheDirectory(t *testing.T) {
+	// The whole point of SymlinkTarget is to use os.Lstat (which reports on
+	// the link itself) rather than os.Stat (which would follow it) — this
+	// proves it never tries to read the resolved directory's content,
+	// which is exactly the operation that fails with "is a directory" if
+	// attempted (see fileops.filesEqual, called from CompareTwoFiles).
+	dir := t.TempDir()
+	targetDir := filepath.Join(dir, "target")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink("target", link); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := SymlinkTarget(link); err != nil {
+		t.Fatalf("SymlinkTarget should succeed without ever reading through the symlink: %v", err)
+	}
+}
+
+func TestSymlinkTarget_NonexistentPathErrors(t *testing.T) {
+	dir := t.TempDir()
+
+	_, _, err := SymlinkTarget(filepath.Join(dir, "does-not-exist"))
+	if err == nil {
+		t.Fatal("expected an error for a nonexistent path, got nil")
+	}
+}

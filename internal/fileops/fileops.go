@@ -9,6 +9,29 @@ import (
 	"strings"
 )
 
+// SymlinkTarget reports whether path is a symbolic link and, if so, what
+// it points to (via os.Readlink) — used to compare a symlink by its
+// target string rather than attempting to read through it, which fails
+// outright for a symlink to a directory (os.Open + Read on it returns
+// "is a directory") and is misleading even for a symlink to a regular
+// file (it would conflate "did the link itself change" with "did the
+// target's content change"). Uses os.Lstat, not os.Stat, so it reports
+// on the link itself rather than following it first.
+func SymlinkTarget(path string) (target string, isSymlink bool, err error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", false, err
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return "", false, nil
+	}
+	target, err = os.Readlink(path)
+	if err != nil {
+		return "", false, err
+	}
+	return target, true, nil
+}
+
 // Copy copies src onto dest, recursively. If dest already exists as a
 // directory, it is removed first so the result exactly mirrors src rather
 // than nesting src inside the existing directory. If dest exists as a

@@ -94,6 +94,23 @@ func TestMergeItem_AllThreePresent_BinaryDifferentIsConflictWithoutInvokingDiff3
 	}
 }
 
+func TestMergeItem_AllThreePresent_SymlinkDifferentIsConflictWithoutInvokingDiff3(t *testing.T) {
+	leftRoot, middleRoot, rightRoot := t.TempDir(), t.TempDir(), t.TempDir()
+	leftPath := mkSymlink(t, leftRoot, "link", "target-a")
+	middlePath := mkSymlink(t, middleRoot, "link", "target-b")
+	rightPath := mkSymlink(t, rightRoot, "link", "target-c")
+	e := &entry.Entry{Name: "link", Left: &leftPath, Middle: &middlePath, Right: &rightPath, Compare: entry.SymlinkDifferent}
+
+	t.Setenv("PATH", t.TempDir()) // proves diff3 is never invoked for this case
+
+	m := newTestModel(3, leftRoot, middleRoot, rightRoot, []*entry.Entry{e})
+	m.mergeItem(e)
+
+	if e.Resolution != entry.ResolutionConflict {
+		t.Errorf("Resolution = %q, want 'c'", e.Resolution.Char())
+	}
+}
+
 // ── mergeOneSideAbsent (file present on one side, absent on the other) ──────
 
 func TestMergeItem_OneSidedAdd_NoMiddle_CopiesAndMarks(t *testing.T) {
@@ -207,6 +224,24 @@ func TestMergeItem_NoCommonAncestor_DifferentContentConflicts(t *testing.T) {
 	}
 	if e.Middle != nil {
 		t.Error("e.Middle should stay nil on a conflict — nothing gets copied")
+	}
+}
+
+// TestMergeItem_NoCommonAncestor_SymlinkToDirectory is a regression case:
+// mergeNoCommonAncestor uses contentEqual (fileops.CompareTwoFiles under
+// the hood), which fails outright ("is a directory") if handed a symlink
+// to a directory — contentEqual must check compareSymlinks first.
+func TestMergeItem_NoCommonAncestor_SymlinkToDirectory(t *testing.T) {
+	leftRoot, middleRoot, rightRoot := t.TempDir(), t.TempDir(), t.TempDir()
+	leftPath := mkSymlink(t, leftRoot, "link", "somewhere")
+	rightPath := mkSymlink(t, rightRoot, "link", "somewhere")
+	e := &entry.Entry{Name: "link", Left: &leftPath, Right: &rightPath}
+
+	m := newTestModel(3, leftRoot, middleRoot, rightRoot, []*entry.Entry{e})
+	m.mergeItem(e)
+
+	if e.Resolution != entry.ResolutionTookRight {
+		t.Errorf("Resolution = %q, want 'b' — identical symlink targets should auto-resolve, not error", e.Resolution.Char())
 	}
 }
 

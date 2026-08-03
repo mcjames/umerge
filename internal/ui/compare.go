@@ -55,10 +55,44 @@ func allSidesPresent(e *entry.Entry, ways int) bool {
 	return e.Left != nil && e.Middle != nil && e.Right != nil
 }
 
+// compareSymlinks classifies a comparison by symlink target instead of
+// file content when at least one of paths is a symbolic link — reading
+// through a symlink to a directory fails outright ("is a directory"),
+// and even for a symlink to a regular file, reading through it conflates
+// "did the link itself change" with "did the target's content change".
+// handled is false when none of paths is a symlink, meaning the caller
+// should fall through to its normal file-content comparison.
+func compareSymlinks(paths []string) (state entry.CompareState, handled bool) {
+	targets := make([]string, len(paths))
+	isLink := make([]bool, len(paths))
+	anyLink := false
+	for i, p := range paths {
+		target, link, err := fileops.SymlinkTarget(p)
+		if err != nil {
+			return entry.CompareError, true
+		}
+		targets[i], isLink[i] = target, link
+		anyLink = anyLink || link
+	}
+	if !anyLink {
+		return 0, false
+	}
+	for i := 1; i < len(paths); i++ {
+		if isLink[i] != isLink[0] || targets[i] != targets[0] {
+			return entry.SymlinkDifferent, true
+		}
+	}
+	return entry.Same, true
+}
+
 func compareEntry(e *entry.Entry, ways int) compareResultMsg {
 	msg := compareResultMsg{e: e}
 
 	if ways == 2 {
+		if state, handled := compareSymlinks([]string{*e.Left, *e.Right}); handled {
+			msg.state = state
+			return msg
+		}
 		n, binary, err := fileops.CompareTwoFiles(*e.Left, *e.Right)
 		if err != nil {
 			msg.state = entry.CompareError
@@ -78,6 +112,10 @@ func compareEntry(e *entry.Entry, ways int) compareResultMsg {
 	}
 
 	// 3-way
+	if state, handled := compareSymlinks([]string{*e.Left, *e.Middle, *e.Right}); handled {
+		msg.state = state
+		return msg
+	}
 	lm, mr, binary, err := fileops.CompareThreeFiles(*e.Left, *e.Middle, *e.Right)
 	if err != nil {
 		msg.state = entry.CompareError

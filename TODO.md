@@ -1127,6 +1127,53 @@ image/Word diff, which are out of scope).
   against real random-content binary files confirming the fix (previously
   silently `=`/white, now correctly `bin`/blue). `umerge.1`'s "Diff
   counts" section documents the new `bin` marker.
+- **Symlink handling — ✅ DONE (2026-08-03), found during real-world
+  testing.** Reported live during pre-1.0 stress testing: comparing a
+  checkout of the Linux kernel source tree against itself,
+  `scripts/dtc/include-prefixes` (a symlink to a directory) rendered as
+  a red `CompareError` instead of matching. Root cause: `os.ReadDir`'s
+  `DirEntry.IsDir()` reflects a symlink's *own* type, not its target, so
+  `BuildTree` already correctly
+  treats a symlink as a leaf (not something to recurse into) — but
+  comparison then tried to read it as regular file content, and reading
+  a directory's bytes through a symlink fails outright (`EISDIR`).
+  Checked: neither Python original has any symlink-aware code at all (no
+  `symlink`/`islink`/`readlink` anywhere in the source), so this isn't a
+  Go-specific regression, just a shared, previously-undiscovered gap.
+  Fixed with `fileops.SymlinkTarget` (a thin `os.Lstat`/`os.Readlink`
+  wrapper) and `ui.compareSymlinks`, called from `compareEntry` *before*
+  ever reaching `fileops.CompareTwoFiles`/`CompareThreeFiles` — a symlink
+  is now classified by comparing its link-target string, never by
+  reading through it. **Deliberately never follows a symlink to
+  enumerate or diff whatever it points to**, even when comparison would
+  otherwise succeed (e.g. a symlink to a regular file) — recursing
+  through a symlink risks a `d`/copy operation reaching files entirely
+  outside the compared tree, the same class of hazard already documented
+  for `git difftool -d`'s own symlinks (Priority 6), just arising from a
+  symlink that's part of the tree's actual content instead of one git
+  itself created. New `entry.CompareState` value `SymlinkDifferent`
+  (same "changed" blue color as a real difference, `link` marker instead
+  of a hunk count — mirrors `BinaryDifferent` exactly) covers both a
+  target mismatch and a symlink-vs-non-symlink mismatch at the same
+  path. `merge.go`'s `contentEqual` (used by `mergeOneSideAbsent`/
+  `mergeNoCommonAncestor`) and `mergeAllThreePresent` both route through
+  the same check — a symlink mismatch in the 3-way merge workflow is an
+  immediate conflict, matching `BinaryDifferent`'s treatment there, since
+  `diff3 -m` can't meaningfully merge either. Copy/delete needed no
+  changes at all: `cp -R` already preserves symlinks as symlinks rather
+  than dereferencing them, and `os.RemoveAll` already unlinks a symlink
+  itself rather than following it — both were already safe by accident
+  of the primitives already in use. Verified with unit tests at every
+  layer (`fileops`: `SymlinkTarget`'s classification and that it never
+  attempts to read through the link; `ui`: `compareSymlinks`' 2-way/
+  3-way matrix including the mismatched-type case, `compareEntry`
+  end-to-end, `mergeAllThreePresent`'s immediate-conflict path proven not
+  to invoke `diff3`, `mergeNoCommonAncestor`'s regression case) plus a
+  live-pty check reproducing the exact reported shape (identical symlink
+  on both sides of a 2-way comparison) confirming `=` instead of red, and
+  a second check confirming a genuine target mismatch renders `link` in
+  the same blue as any other difference. `README.md` and `umerge.1`'s
+  "Diff counts" section updated for the new `link` marker.
 - **Rename/move detection** (stretch) — a file moved within the tree
   shouldn't render as a delete+insert pair. Hard to get fully right; lower
   priority than the items above, but a strong "professional tool" signal.

@@ -71,6 +71,10 @@ own directory-diff mechanism.
 - Respects a top-level `.gitignore` by default (plus always hiding `.git`
   itself), so comparing a real repo doesn't drown you in build artifacts;
   pass `-I`/`--no-gitignore` to see everything
+- Symbolic links are compared by their target string, never followed —
+  a symlink to a directory (real trees have these; the Linux kernel's
+  `scripts/dtc/include-prefixes` is one) is always treated as a single,
+  opaque entry rather than something to read through or recurse into
 
 ## Installation
 

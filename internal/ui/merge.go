@@ -204,14 +204,15 @@ func (m *Model) mergeNoCommonAncestor(e *entry.Entry) {
 
 // mergeAllThreePresent classifies a file present on every side: no-op if
 // already identical everywhere, an immediate conflict for binary content
-// (diff3 can't merge it — see fileops.CompareThreeFiles), otherwise a
-// real diff3 -m merge, writing the result to middle on success or
-// flagging a conflict (leaving middle untouched) on overlap.
+// or a symlink mismatch (diff3 can't merge either — see
+// fileops.CompareThreeFiles and ui.compareSymlinks), otherwise a real
+// diff3 -m merge, writing the result to middle on success or flagging a
+// conflict (leaving middle untouched) on overlap.
 func (m *Model) mergeAllThreePresent(e *entry.Entry) {
 	if e.Compare == entry.Same {
 		return
 	}
-	if e.Compare == entry.BinaryDifferent {
+	if e.Compare == entry.BinaryDifferent || e.Compare == entry.SymlinkDifferent {
 		e.Resolution = entry.ResolutionConflict
 		return
 	}
@@ -300,8 +301,15 @@ func (m *Model) mergeCreateMiddleDir(e *entry.Entry) bool {
 // contentEqual reports whether a and b are byte-identical, reusing
 // fileops.CompareTwoFiles (which already short-circuits via a size+chunk
 // comparison before ever invoking diff) rather than adding a separate
-// exported equality primitive to fileops for this one call site.
+// exported equality primitive to fileops for this one call site. Checks
+// compareSymlinks first — both call sites (mergeOneSideAbsent,
+// mergeNoCommonAncestor) can be handed a symlink, and CompareTwoFiles
+// would otherwise fail outright trying to read through a symlink to a
+// directory.
 func contentEqual(a, b string) (bool, error) {
+	if state, handled := compareSymlinks([]string{a, b}); handled {
+		return state == entry.Same, nil
+	}
 	n, binary, err := fileops.CompareTwoFiles(a, b)
 	if err != nil {
 		return false, err

@@ -310,6 +310,17 @@ it detects this itself first, the same way
 does: checking whether the leading bytes contain a NUL byte
 .Pc .
 This entry is still highlighted the same as any other difference.
+.It link
+At least one side is a symbolic link, and either the other side isn't a
+symlink too, or their targets differ.
+Classified by comparing link target strings
+.Pq via Xr readlink 2 ,
+never by reading through the symlink — which would fail outright for a
+symlink to a directory, and would conflate "did the link change" with
+"did the target's content change" even for one to a regular file.
+A symlink is never followed to enumerate or compare whatever it points
+to; it is always treated as a single, opaque entry.
+This entry is still highlighted the same as any other difference.
 .El
 In two-way mode the count appears in the left column.
 In three-way mode the left column shows the count of hunks between
@@ -666,6 +677,7 @@ bindings) so the git integration is a safe viewer by default.
 .Xr diff3 1 ,
 .Xr emacs 1 ,
 .Xr vim 1 ,
-.Xr vimdiff 1
+.Xr vimdiff 1 ,
+.Xr readlink 2
 .Sh AUTHORS
 .An Michael C. James
