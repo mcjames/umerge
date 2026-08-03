@@ -12,7 +12,7 @@ import (
 	flag "github.com/spf13/pflag"
 )
 
-const version = "0.1.2"
+const version = "1.0.0"
 
 func main() {
 	prog := filepath.Base(os.Args[0])

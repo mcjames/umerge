@@ -239,7 +239,11 @@ so the git integration is a safe viewer by default.
 
 ## Roadmap
 
-Development is tracked in [`TODO.md`](TODO.md); in planned order:
+1.0 matches the Python original this project started from, plus
+`.gitignore`-aware filtering, binary-file handling, the `git difftool`
+integration, and focus mode — none of which the original ever had.
+What's planned beyond 1.0, tracked in [`TODO.md`](TODO.md), in planned
+order:
 
 - Wildcard/regex include/exclude filters, plus options to ignore
   whitespace/case/blank-line-only diffs when comparing file contents
