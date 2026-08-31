@@ -1,0 +1,34 @@
+name: Release
+
+"on":
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write   # create the GitHub Release and upload assets
+  id-token: write   # cosign keyless signing (Sigstore OIDC)
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # goreleaser needs full history + tags for the changelog
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - uses: sigstore/cosign-installer@v3
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Fine-grained PAT with Contents:write on mcjames/homebrew-umerge.
+          # The default GITHUB_TOKEN cannot push to another repo.
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

@@ -1,0 +1,139 @@
+# goreleaser configuration — see https://goreleaser.com
+#
+# Rehearsed on a real v0.2.0 tag before the 1.0 release, so the first
+# real exercise of this pipeline isn't the 1.0 tag itself. Iterate
+# locally with:
+#
+#     goreleaser check
+#     goreleaser release --snapshot --clean
+#
+# The tap push (brews:) and cosign signing (signs:) only run on a real
+# tag in CI — --snapshot skips both.
+version: 2
+
+project_name: umerge
+
+before:
+  hooks:
+    - go mod download
+    - go test ./...
+
+builds:
+  - id: umerge
+    main: .
+    binary: umerge
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: umerge
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE
+      - umerge.1
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+# Keyless signing over the checksums file: Sigstore/Fulcio issues a
+# short-lived cert bound to the GitHub Actions OIDC identity, so there
+# is no key material to store or rotate. Verify a download with:
+#
+#     cosign verify-blob \
+#       --certificate checksums.txt.pem \
+#       --signature checksums.txt.sig \
+#       --certificate-identity-regexp 'https://github.com/mcjames/umerge/.+' \
+#       --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#       checksums.txt
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    signature: ${artifact}.sig
+    certificate: ${artifact}.pem
+    args:
+      - sign-blob
+      - --yes
+      - --output-signature=${signature}
+      - --output-certificate=${certificate}
+      - ${artifact}
+    output: true
+
+nfpms:
+  - id: umerge
+    package_name: umerge
+    vendor: Michael James
+    homepage: https://github.com/mcjames/umerge
+    maintainer: Michael James <1919111+mcjames@users.noreply.github.com>
+    description: >-
+      Terminal-native two-way and three-way directory comparison and
+      merge tool, also usable as a `git difftool -d` backend.
+    license: BSD-3-Clause
+    formats:
+      - deb
+      - rpm
+    section: utils
+    bindir: /usr/bin
+    contents:
+      - src: ./umerge.1
+        dst: /usr/share/man/man1/umerge.1
+        file_info:
+          mode: 0644
+
+# goreleaser deprecated `brews` (formulae) in favour of `homebrew_casks`.
+# Casks are macOS-only — Linux users are covered by the .deb/.rpm below
+# and by `go install`. Users install with:
+#
+#     brew install mcjames/umerge/umerge
+#
+# (Homebrew auto-detects the cask; no `--cask` needed.)
+homebrew_casks:
+  - name: umerge
+    repository:
+      owner: mcjames
+      name: homebrew-umerge
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: https://github.com/mcjames/umerge
+    description: Terminal-native two-way and three-way directory comparison and merge tool
+    binaries:
+      - umerge
+    manpages:
+      - umerge.1
+    commit_author:
+      name: goreleaser-bot
+      email: 1919111+mcjames@users.noreply.github.com
+
+release:
+  github:
+    owner: mcjames
+    name: umerge
+  prerelease: auto
+  draft: false
+  mode: replace
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "Merge pull request"
+      - "Merge branch"
