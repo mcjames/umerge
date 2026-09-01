@@ -4,8 +4,11 @@
 # real exercise of this pipeline isn't the 1.0 tag itself. Iterate
 # locally with:
 #
-#     goreleaser check
 #     goreleaser release --snapshot --clean
+#
+# `goreleaser check` will flag `brews` as deprecated and exit non-zero —
+# that's expected and deliberate (see the brews: block below). `release`
+# only warns and proceeds, which is what CI runs.
 #
 # The tap push (brews:) and cosign signing (signs:) only run on a real
 # tag in CI — --snapshot skips both.
@@ -95,30 +98,47 @@ nfpms:
         file_info:
           mode: 0644
 
-# goreleaser deprecated `brews` (formulae) in favour of `homebrew_casks`.
-# Casks are macOS-only — Linux users are covered by the .deb/.rpm below
-# and by `go install`. Users install with:
-#
-#     brew install mcjames/umerge/umerge
-#
-# (Homebrew auto-detects the cask; no `--cask` needed.)
-homebrew_casks:
+# Homebrew FORMULA (not cask), a deliberate choice against goreleaser's
+# current recommendation. Casks are NOT macOS-only anymore (Homebrew
+# 4.5.0, Apr 2025, added Linux support for binary-only casks), so this
+# isn't "the only thing that works on Linux" — it's the smoother option:
+#   - No Homebrew-version floor. A cask needs the user on >= 4.5.0 and,
+#     on Linux, historically `brew install --cask <tap>/<name>` (bare
+#     `brew install` didn't resolve tap casks on Linux → "I broke
+#     everyone" reports). A formula: plain `brew install`, any version.
+#   - A formula-installed binary is not quarantined by Homebrew, so the
+#     macOS "unidentified developer" Gatekeeper dialog never appears —
+#     that's a cask-only side effect. No xattr hook, no caveats needed.
+#   - `brew upgrade` picks up new formula versions; it silently skips
+#     casks unless they're version-pinned.
+#   - For a single static binary the generated formula is ~60 clean lines
+#     (per-OS/arch tarball download + bin/man install); goreleaser's
+#     "hackyish formulas" warning is about complex apps, not this.
+# Cost: `brews` is deprecated — soft since goreleaser v2.10, fully since
+# v2.16. `goreleaser check` exits non-zero on it; `goreleaser release`
+# (what CI runs) only warns and proceeds. Removal is slated for v3, which
+# has no date and isn't on the roadmap. If v3 ever ships: commit this
+# ~60-line formula straight into the tap and bump it with a small
+# workflow step, or migrate to homebrew_casks (mechanical).
+brews:
   - name: umerge
     repository:
       owner: mcjames
       name: homebrew-umerge
       branch: main
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Casks
+    directory: Formula
     homepage: https://github.com/mcjames/umerge
     description: Terminal-native two-way and three-way directory comparison and merge tool
-    binaries:
-      - umerge
-    manpages:
-      - umerge.1
+    license: BSD-3-Clause
     commit_author:
       name: goreleaser-bot
       email: 1919111+mcjames@users.noreply.github.com
+    install: |
+      bin.install "umerge"
+      man1.install "umerge.1"
+    test: |
+      assert_match version.to_s, shell_output("#{bin}/umerge --version")
 
 release:
   github:
