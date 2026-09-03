@@ -30,7 +30,12 @@ builds:
     flags:
       - -trimpath
     ldflags:
+      # Specifying ldflags overrides goreleaser's default (which includes
+      # -X main.version={{.Version}}), so the version injection has to be
+      # repeated here explicitly. main.version is the single source of
+      # truth for the release version and {{.Version}} comes from the tag.
       - -s -w
+      - -X main.version={{ .Version }}
     goos:
       - linux
       - darwin

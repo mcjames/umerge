@@ -78,20 +78,68 @@ own directory-diff mechanism.
 
 ## Installation
 
-umerge isn't packaged in any package manager yet, but it installs cleanly
-with Go's own tooling:
+### Homebrew (macOS and Linux)
+
+```sh
+brew install mcjames/umerge/umerge
+```
+
+This taps [`mcjames/homebrew-umerge`](https://github.com/mcjames/homebrew-umerge)
+and installs the latest release; `brew upgrade umerge` later. It's a
+formula (not a cask), so it works on Linuxbrew too, and the macOS
+binary — though not Apple-notarized — installs without a Gatekeeper
+prompt.
+
+### Debian/Ubuntu (`.deb`) and Fedora/RHEL (`.rpm`)
+
+Download the package for your architecture from the
+[latest release](https://github.com/mcjames/umerge/releases/latest) and
+install it directly:
+
+```sh
+sudo apt install ./umerge_*_linux_amd64.deb     # Debian/Ubuntu
+sudo dnf install ./umerge_*_linux_amd64.rpm     # Fedora/RHEL
+```
+
+There's no APT/DNF repository — re-download to upgrade. The package
+installs the binary to `/usr/bin/umerge` and the man page to
+`/usr/share/man/man1`.
+
+### Prebuilt binaries
+
+`tar.gz` archives for Linux and macOS (amd64 and arm64) are attached to
+every [release](https://github.com/mcjames/umerge/releases). Each one
+contains the `umerge` binary, `umerge.1`, `README.md`, and `LICENSE` —
+drop the binary somewhere on your `PATH`.
+
+Every release also ships a `checksums.txt` signed with
+[cosign](https://docs.sigstore.dev/) (keyless, no published key). To
+verify a download:
+
+```sh
+cosign verify-blob \
+  --certificate checksums.txt.pem \
+  --signature checksums.txt.sig \
+  --certificate-identity-regexp 'https://github.com/mcjames/umerge/\.github/workflows/.+' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  checksums.txt
+```
+
+### From source
 
 ```sh
 go install github.com/mcjames/umerge@latest
 ```
 
-Or build it from source:
+or
 
 ```sh
 git clone https://github.com/mcjames/umerge.git
 cd umerge
 go build .
 ```
+
+### Runtime dependencies
 
 Requires `diff`, `diff3`, and whichever merge tool you configure (`vim`
 by default, or `emacs`) to be on your `PATH`.

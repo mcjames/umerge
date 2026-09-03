@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mcjames/umerge/internal/entry"
@@ -12,7 +13,26 @@ import (
 	flag "github.com/spf13/pflag"
 )
 
-const version = "0.2.0"
+// version is the single source of truth for the release version: the git
+// tag. Release builds get it via -ldflags -X main.version=<tag> (set by
+// goreleaser). `go install ...@<tag>` builds get it from the module build
+// info below. A plain local `go build` leaves it as "dev".
+var version = "dev"
+
+// resolveVersion returns the -ldflags value when set, otherwise the module
+// version stamped by `go install` (Go fills Main.Version for versioned
+// installs and "(devel)" otherwise), otherwise "dev".
+func resolveVersion() string {
+	if version != "dev" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if v := info.Main.Version; v != "" && v != "(devel)" {
+			return v
+		}
+	}
+	return version
+}
 
 func main() {
 	prog := filepath.Base(os.Args[0])
@@ -169,7 +189,7 @@ func printHelp(w io.Writer, prog string) {
 }
 
 func printVersion(w io.Writer) {
-	fmt.Fprintf(w, "umerge %s\n", version)
+	fmt.Fprintf(w, "umerge %s\n", resolveVersion())
 	fmt.Fprintf(w, "Copyright (C) 2026 Michael C. James. All rights reserved.\n")
 	fmt.Fprintf(w, "This software is distributed under the BSD 3-Clause License.\n")
 }
